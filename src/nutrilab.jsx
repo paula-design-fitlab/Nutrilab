@@ -9,18 +9,197 @@ const TABS = [
   { id: 'seguimiento', label: 'Seguimiento', icon: '🌙' },
 ]
 
+const ESTADOS = ['pendiente', 'realizada', 'omitida']
+const ESTADO_LABEL = { pendiente: 'Pendiente', realizada: 'Realizada', omitida: 'Omitida' }
+const TIPO_COMIDA_LABEL = { desayuno: 'Desayuno', comida: 'Comida', merienda: 'Merienda', cena: 'Cena' }
+
 function ScreenHoy() {
+  const [horarioHoy, setHorarioHoy] = useState(null)
+  const [comidasHoy, setComidasHoy] = useState([]) // filas de nutrilab_menu_semanal de hoy
+  const [loading, setLoading] = useState(true)
+  const [añadiendoTipo, setAñadiendoTipo] = useState(null)
+  const [textoNuevo, setTextoNuevo] = useState('')
+  const [editandoId, setEditandoId] = useState(null)
+  const [textoEdicion, setTextoEdicion] = useState('')
+
+  const hoyStr = formatoFecha(new Date())
+  const hoyLabelFecha = (() => {
+    const d = new Date()
+    const diaSemana = DIAS_SEMANA_LABEL[DIAS_SEMANA[(d.getDay() + 6) % 7]]
+    return `${diaSemana}, ${d.getDate()} de ${mesLabel(hoyStr).toLowerCase()}`
+  })()
+
+  async function cargarTodo() {
+    setLoading(true)
+    const { data: dh } = await supabase.from('nutrilab_dias_horario').select('*, nutrilab_horarios(*)').eq('fecha', hoyStr).maybeSingle()
+    setHorarioHoy(dh?.nutrilab_horarios || null)
+    const { data: cm } = await supabase.from('nutrilab_menu_semanal').select('*').eq('fecha', hoyStr)
+    setComidasHoy(cm || [])
+    setLoading(false)
+  }
+
+  useEffect(() => { cargarTodo() }, [])
+
+  function filaDe(tipo) {
+    return comidasHoy.find((c) => c.tipo_comida === tipo) || null
+  }
+
+  async function añadirComidaLibre(tipo) {
+    if (!textoNuevo.trim()) return
+    await sb.post('nutrilab_menu_semanal', {
+      id: Date.now(),
+      fecha: hoyStr,
+      tipo_comida: tipo,
+      nombre_libre: textoNuevo.trim(),
+      estado: 'pendiente',
+    })
+    setTextoNuevo('')
+    setAñadiendoTipo(null)
+    cargarTodo()
+  }
+
+  async function cambiarEstado(fila, nuevoEstado) {
+    await supabase.from('nutrilab_menu_semanal').update({ estado: nuevoEstado }).eq('id', fila.id)
+    cargarTodo()
+  }
+
+  function empezarEdicion(fila) {
+    setEditandoId(fila.id)
+    setTextoEdicion(fila.nombre_libre || '')
+  }
+
+  async function guardarEdicion(fila) {
+    if (!textoEdicion.trim()) return
+    await supabase.from('nutrilab_menu_semanal').update({ nombre_libre: textoEdicion.trim() }).eq('id', fila.id)
+    setEditandoId(null)
+    cargarTodo()
+  }
+
+  async function eliminarComida(fila) {
+    await supabase.from('nutrilab_menu_semanal').delete().eq('id', fila.id)
+    cargarTodo()
+  }
+
+  if (loading) {
+    return (
+      <>
+        <div className="app-header">
+          <p className="eyebrow">{hoyLabelFecha}</p>
+          <h1>¿Qué toca hoy?</h1>
+        </div>
+        <div className="app-content"><div className="empty-state"><p>Cargando…</p></div></div>
+      </>
+    )
+  }
+
+  if (!horarioHoy) {
+    return (
+      <>
+        <div className="app-header">
+          <p className="eyebrow">{hoyLabelFecha}</p>
+          <h1>¿Qué toca hoy?</h1>
+        </div>
+        <div className="app-content">
+          <div className="empty-state">
+            <span className="icon">🌿</span>
+            <p>Todavía no has asignado un horario a hoy.<br />Ve a la pestaña Menú y elige si hoy toca horario de mañana o de tarde.</p>
+          </div>
+        </div>
+      </>
+    )
+  }
+
   return (
     <>
       <div className="app-header">
-        <p className="eyebrow">Martes, 30 de junio</p>
+        <p className="eyebrow">{hoyLabelFecha}</p>
         <h1>¿Qué toca hoy?</h1>
       </div>
       <div className="app-content">
-        <div className="empty-state">
-          <span className="icon">🌿</span>
-          <p>Todavía no tienes un menú planificado para hoy.<br />En cuanto definamos el menú semanal, aquí verás tus comidas del día.</p>
-        </div>
+        {(horarioHoy.comidas_incluidas || []).map((tipo) => {
+          const fila = filaDe(tipo)
+          return (
+            <div key={tipo} className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong style={{ fontSize: 14, color: 'var(--sage-deep)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                  {TIPO_COMIDA_LABEL[tipo]}
+                </strong>
+                {fila && fila.estado !== 'pendiente' && (
+                  <span style={{
+                    fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 999,
+                    background: fila.estado === 'realizada' ? 'rgba(143,168,137,0.18)' : 'rgba(199,123,94,0.15)',
+                    color: fila.estado === 'realizada' ? 'var(--sage-deep)' : '#C77B5E',
+                  }}>
+                    {ESTADO_LABEL[fila.estado]}
+                  </span>
+                )}
+              </div>
+
+              {!fila ? (
+                añadiendoTipo === tipo ? (
+                  <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                    <input
+                      autoFocus
+                      type="text"
+                      placeholder="¿Qué vas a comer?"
+                      value={textoNuevo}
+                      onChange={(e) => setTextoNuevo(e.target.value)}
+                      style={{ flex: 1, border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)', padding: '9px 12px', fontSize: 14, fontFamily: 'inherit' }}
+                    />
+                    <button
+                      onClick={() => añadirComidaLibre(tipo)}
+                      style={{ background: 'var(--sage-deep)', color: 'white', border: 'none', borderRadius: 'var(--radius-sm)', padding: '0 14px', fontWeight: 600, fontSize: 13 }}
+                    >
+                      Añadir
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { setAñadiendoTipo(tipo); setTextoNuevo('') }}
+                    style={{ marginTop: 12, background: 'none', border: '1px dashed var(--line)', borderRadius: 'var(--radius-sm)', padding: '10px', width: '100%', color: 'var(--ink-soft)', fontSize: 14 }}
+                  >
+                    + Añadir comida
+                  </button>
+                )
+              ) : editandoId === fila.id ? (
+                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={textoEdicion}
+                    onChange={(e) => setTextoEdicion(e.target.value)}
+                    style={{ flex: 1, border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)', padding: '9px 12px', fontSize: 14, fontFamily: 'inherit' }}
+                  />
+                  <button onClick={() => guardarEdicion(fila)} style={{ background: 'var(--sage-deep)', color: 'white', border: 'none', borderRadius: 'var(--radius-sm)', padding: '0 14px', fontWeight: 600, fontSize: 13 }}>OK</button>
+                </div>
+              ) : (
+                <>
+                  <p style={{ fontSize: 16, fontFamily: 'var(--font-display)', margin: '10px 0 14px' }}>
+                    {fila.nombre_libre || 'Receta'}
+                  </p>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {ESTADOS.map((e) => (
+                      <button
+                        key={e}
+                        onClick={() => cambiarEstado(fila, e)}
+                        style={{
+                          border: fila.estado === e ? '1.5px solid var(--sage-deep)' : '1px solid var(--line)',
+                          background: fila.estado === e ? 'var(--sage-deep)' : 'white',
+                          color: fila.estado === e ? 'white' : 'var(--ink)',
+                          borderRadius: 999, padding: '6px 12px', fontSize: 12.5, fontWeight: 500,
+                        }}
+                      >
+                        {ESTADO_LABEL[e]}
+                      </button>
+                    ))}
+                    <button onClick={() => empezarEdicion(fila)} style={{ background: 'none', border: 'none', color: 'var(--sage-deep)', fontSize: 12.5, padding: '6px 4px' }}>Editar</button>
+                    <button onClick={() => eliminarComida(fila)} style={{ background: 'none', border: 'none', color: '#C77B5E', fontSize: 12.5, padding: '6px 4px' }}>Eliminar</button>
+                  </div>
+                </>
+              )}
+            </div>
+          )
+        })}
       </div>
     </>
   )
