@@ -37,7 +37,10 @@ function lunesDeEstaSemana() {
 }
 
 function formatoFecha(d) {
-  return d.toISOString().slice(0, 10)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
@@ -298,7 +301,7 @@ function ScreenSeguimiento() {
     setSaving(true)
     await sb.post('nutrilab_peso', {
       id: Date.now(),
-      fecha: new Date().toISOString().slice(0, 10),
+      fecha: formatoFecha(new Date()),
       peso: valor,
     })
     setNuevoPeso('')
