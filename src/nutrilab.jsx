@@ -40,14 +40,31 @@ function formatoFecha(d) {
   return d.toISOString().slice(0, 10)
 }
 
+const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+
+function mesLabel(fechaStr) {
+  const d = new Date(fechaStr + 'T00:00:00')
+  const mes = MESES[d.getMonth()]
+  return mes.charAt(0).toUpperCase() + mes.slice(1)
+}
+
+function numeroDia(fechaStr) {
+  const d = new Date(fechaStr + 'T00:00:00')
+  return d.getDate()
+}
+
 const DIAS_SEMANA = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo']
 const DIAS_SEMANA_LABEL = { lunes: 'Lunes', martes: 'Martes', miercoles: 'Miércoles', jueves: 'Jueves', viernes: 'Viernes', sabado: 'Sábado', domingo: 'Domingo' }
 
 function ScreenMenu() {
   const [horarios, setHorarios] = useState([])
-  const [diasHorario, setDiasHorario] = useState({}) // fecha -> horario_id
+  const [diasHorario, setDiasHorario] = useState({}) // fecha -> horario_id (guardado)
+  const [diasHorarioLocal, setDiasHorarioLocal] = useState({}) // cambios sin guardar
   const [semanaConfig, setSemanaConfig] = useState(null)
+  const [diaBatchLocal, setDiaBatchLocal] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [guardando, setGuardando] = useState(false)
+  const [guardado, setGuardado] = useState(false)
 
   const lunes = lunesDeEstaSemana()
   const fechasSemana = DIAS_SEMANA.map((_, i) => {
@@ -56,6 +73,7 @@ function ScreenMenu() {
     return formatoFecha(d)
   })
   const semanaInicioStr = formatoFecha(lunes)
+  const hoyStr = formatoFecha(new Date())
 
   async function cargarTodo() {
     setLoading(true)
@@ -64,31 +82,58 @@ function ScreenMenu() {
       supabase.from('nutrilab_dias_horario').select('*').in('fecha', fechasSemana),
       supabase.from('nutrilab_semana_config').select('*').eq('semana_inicio', semanaInicioStr),
     ])
-    setHorarios(h || [])
+    setHorarios((h || []).slice().sort((a, b) => {
+      const orden = { 'Horario de mañana': 0, 'Horario de tarde': 1 }
+      return (orden[a.nombre] ?? 99) - (orden[b.nombre] ?? 99)
+    }))
     const map = {}
     ;(dh || []).forEach((r) => { map[r.fecha] = r.horario_id })
     setDiasHorario(map)
-    setSemanaConfig((sc && sc[0]) || null)
+    setDiasHorarioLocal(map)
+    const cfg = (sc && sc[0]) || null
+    setSemanaConfig(cfg)
+    setDiaBatchLocal(cfg?.dia_batch_cooking || null)
     setLoading(false)
   }
 
   useEffect(() => { cargarTodo() }, [])
 
-  async function elegirHorarioDia(fecha, horarioId) {
-    await supabase.from('nutrilab_dias_horario').upsert({ fecha, horario_id: horarioId })
-    setDiasHorario((prev) => ({ ...prev, [fecha]: horarioId }))
+  function elegirHorarioDia(fecha, horarioId) {
+    setDiasHorarioLocal((prev) => ({ ...prev, [fecha]: horarioId }))
+    setGuardado(false)
   }
 
-  async function elegirDiaBatch(dia) {
-    if (semanaConfig) {
-      await supabase.from('nutrilab_semana_config').update({ dia_batch_cooking: dia }).eq('id', semanaConfig.id)
-    } else {
-      await supabase.from('nutrilab_semana_config').insert({
-        id: Date.now(), semana_inicio: semanaInicioStr, dia_batch_cooking: dia,
-      })
-    }
-    cargarTodo()
+  function elegirDiaBatch(dia) {
+    setDiaBatchLocal(dia)
+    setGuardado(false)
   }
+
+  async function guardarCambios() {
+    setGuardando(true)
+
+    const filas = Object.entries(diasHorarioLocal).map(([fecha, horario_id]) => ({ fecha, horario_id }))
+    if (filas.length > 0) {
+      await supabase.from('nutrilab_dias_horario').upsert(filas)
+    }
+
+    if (diaBatchLocal) {
+      if (semanaConfig) {
+        await supabase.from('nutrilab_semana_config').update({ dia_batch_cooking: diaBatchLocal }).eq('id', semanaConfig.id)
+      } else {
+        await supabase.from('nutrilab_semana_config').insert({
+          id: Date.now(), semana_inicio: semanaInicioStr, dia_batch_cooking: diaBatchLocal,
+        })
+      }
+    }
+
+    await cargarTodo()
+    setGuardando(false)
+    setGuardado(true)
+    setTimeout(() => setGuardado(false), 2500)
+  }
+
+  const hayCambios = JSON.stringify(diasHorarioLocal) !== JSON.stringify(diasHorario)
+    || diaBatchLocal !== (semanaConfig?.dia_batch_cooking || null)
 
   if (loading) {
     return (
@@ -105,7 +150,7 @@ function ScreenMenu() {
   return (
     <>
       <div className="app-header">
-        <p className="eyebrow">Esta semana</p>
+        <p className="eyebrow">{mesLabel(fechasSemana[0])}</p>
         <h1>Menú semanal</h1>
       </div>
       <div className="app-content">
@@ -118,10 +163,16 @@ function ScreenMenu() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {DIAS_SEMANA.map((dia, i) => {
               const fecha = fechasSemana[i]
-              const activo = diasHorario[fecha]
+              const activo = diasHorarioLocal[fecha]
+              const esHoy = fecha === hoyStr
               return (
                 <div key={dia} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                  <span style={{ fontSize: 14, fontWeight: 500, width: 78, flexShrink: 0 }}>{DIAS_SEMANA_LABEL[dia]}</span>
+                  <span style={{
+                    fontSize: 14, fontWeight: esHoy ? 700 : 500, width: 100, flexShrink: 0,
+                    color: esHoy ? 'var(--sage-deep)' : 'var(--ink)',
+                  }}>
+                    {DIAS_SEMANA_LABEL[dia]} {numeroDia(fecha)}
+                  </span>
                   <div style={{ display: 'flex', gap: 6, flex: 1 }}>
                     {horarios.map((h) => (
                       <button
@@ -156,9 +207,9 @@ function ScreenMenu() {
                 key={d}
                 onClick={() => elegirDiaBatch(d)}
                 style={{
-                  border: semanaConfig?.dia_batch_cooking === d ? '1.5px solid var(--sage-deep)' : '1px solid var(--line)',
-                  background: semanaConfig?.dia_batch_cooking === d ? 'var(--sage-deep)' : 'white',
-                  color: semanaConfig?.dia_batch_cooking === d ? 'white' : 'var(--ink)',
+                  border: diaBatchLocal === d ? '1.5px solid var(--sage-deep)' : '1px solid var(--line)',
+                  background: diaBatchLocal === d ? 'var(--sage-deep)' : 'white',
+                  color: diaBatchLocal === d ? 'white' : 'var(--ink)',
                   borderRadius: 999, padding: '7px 14px', fontSize: 13, fontWeight: 500,
                 }}
               >
@@ -167,6 +218,20 @@ function ScreenMenu() {
             ))}
           </div>
         </div>
+
+        <button
+          onClick={guardarCambios}
+          disabled={!hayCambios || guardando}
+          style={{
+            width: '100%',
+            background: hayCambios ? 'var(--sage-deep)' : 'var(--line)',
+            color: hayCambios ? 'white' : 'var(--ink-soft)',
+            border: 'none', borderRadius: 'var(--radius-sm)',
+            padding: '13px', fontWeight: 600, fontSize: 15, marginBottom: 14,
+          }}
+        >
+          {guardando ? 'Guardando…' : guardado ? 'Guardado ✓' : 'Guardar cambios'}
+        </button>
 
         <div className="empty-state">
           <span className="icon">📅</span>
