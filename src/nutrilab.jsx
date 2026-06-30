@@ -285,6 +285,8 @@ function ScreenSeguimiento() {
   const [loading, setLoading] = useState(true)
   const [nuevoPeso, setNuevoPeso] = useState('')
   const [saving, setSaving] = useState(false)
+  const [editandoId, setEditandoId] = useState(null)
+  const [valorEdicion, setValorEdicion] = useState('')
 
   async function cargarTodo() {
     setLoading(true)
@@ -306,6 +308,24 @@ function ScreenSeguimiento() {
     })
     setNuevoPeso('')
     setSaving(false)
+    cargarTodo()
+  }
+
+  function empezarEdicion(p) {
+    setEditandoId(p.id)
+    setValorEdicion(String(p.peso))
+  }
+
+  async function guardarEdicion(id) {
+    const valor = parseFloat(valorEdicion.replace(',', '.'))
+    if (!valor || valor <= 0) return
+    await supabase.from('nutrilab_peso').update({ peso: valor }).eq('id', id)
+    setEditandoId(null)
+    cargarTodo()
+  }
+
+  async function eliminarPeso(id) {
+    await supabase.from('nutrilab_peso').delete().eq('id', id)
     cargarTodo()
   }
 
@@ -360,9 +380,51 @@ function ScreenSeguimiento() {
           ) : (
             <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
               {pesos.slice(0, 10).map((p) => (
-                <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, borderBottom: '1px solid var(--line)', paddingBottom: 6 }}>
+                <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 14, borderBottom: '1px solid var(--line)', paddingBottom: 8 }}>
                   <span style={{ color: 'var(--ink-soft)' }}>{p.fecha}</span>
-                  <span style={{ fontWeight: 600 }}>{p.peso} kg</span>
+
+                  {editandoId === p.id ? (
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        value={valorEdicion}
+                        onChange={(e) => setValorEdicion(e.target.value)}
+                        style={{
+                          width: 64, border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)',
+                          padding: '4px 6px', fontSize: 14, fontFamily: 'inherit',
+                        }}
+                      />
+                      <button
+                        onClick={() => guardarEdicion(p.id)}
+                        style={{ background: 'var(--sage-deep)', color: 'white', border: 'none', borderRadius: 6, padding: '4px 8px', fontSize: 12, fontWeight: 600 }}
+                      >
+                        OK
+                      </button>
+                      <button
+                        onClick={() => setEditandoId(null)}
+                        style={{ background: 'none', border: 'none', color: 'var(--ink-soft)', fontSize: 12 }}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                      <span style={{ fontWeight: 600 }}>{p.peso} kg</span>
+                      <button
+                        onClick={() => empezarEdicion(p)}
+                        style={{ background: 'none', border: 'none', color: 'var(--sage-deep)', fontSize: 13, padding: 0 }}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        onClick={() => eliminarPeso(p.id)}
+                        style={{ background: 'none', border: 'none', color: '#C77B5E', fontSize: 13, padding: 0 }}
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
