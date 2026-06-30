@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { supabase, sb } from './supabaseClient'
 
 const TABS = [
   { id: 'hoy', label: 'Hoy', icon: '🌿' },
@@ -76,7 +77,70 @@ function ScreenCompra() {
   )
 }
 
+const DIAS = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo']
+const DIAS_LABEL = { lunes: 'Lunes', martes: 'Martes', miercoles: 'Miércoles', jueves: 'Jueves', viernes: 'Viernes', sabado: 'Sábado', domingo: 'Domingo' }
+
 function ScreenPerfil() {
+  const [horarios, setHorarios] = useState([])
+  const [config, setConfig] = useState(null)
+  const [pesos, setPesos] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [nuevoPeso, setNuevoPeso] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  async function cargarTodo() {
+    setLoading(true)
+    const [{ data: h }, { data: c }, { data: p }] = await Promise.all([
+      sb.get('nutrilab_horarios').order('id', { ascending: true }),
+      sb.get('nutrilab_config'),
+      sb.get('nutrilab_peso').order('fecha', { ascending: false }),
+    ])
+    setHorarios(h || [])
+    setConfig((c && c[0]) || null)
+    setPesos(p || [])
+    setLoading(false)
+  }
+
+  useEffect(() => { cargarTodo() }, [])
+
+  async function activarHorario(id) {
+    await supabase.from('nutrilab_horarios').update({ activo: false }).neq('id', 0)
+    await supabase.from('nutrilab_horarios').update({ activo: true }).eq('id', id)
+    await supabase.from('nutrilab_config').update({ horario_activo_id: id }).eq('id', config.id)
+    cargarTodo()
+  }
+
+  async function cambiarDiaBatch(dia) {
+    await supabase.from('nutrilab_config').update({ dia_batch_cooking: dia }).eq('id', config.id)
+    cargarTodo()
+  }
+
+  async function guardarPeso() {
+    const valor = parseFloat(nuevoPeso.replace(',', '.'))
+    if (!valor || valor <= 0) return
+    setSaving(true)
+    await sb.post('nutrilab_peso', {
+      id: Date.now(),
+      fecha: new Date().toISOString().slice(0, 10),
+      peso: valor,
+    })
+    setNuevoPeso('')
+    setSaving(false)
+    cargarTodo()
+  }
+
+  if (loading) {
+    return (
+      <>
+        <div className="app-header">
+          <p className="eyebrow">Seguimiento</p>
+          <h1>Perfil</h1>
+        </div>
+        <div className="app-content"><div className="empty-state"><p>Cargando…</p></div></div>
+      </>
+    )
+  }
+
   return (
     <>
       <div className="app-header">
@@ -84,12 +148,97 @@ function ScreenPerfil() {
         <h1>Perfil</h1>
       </div>
       <div className="app-content">
+
         <div className="card">
-          <strong>Peso y horarios</strong>
-          <p style={{ color: 'var(--ink-soft)', fontSize: 14, marginTop: 6 }}>
-            Aquí registrarás tu peso y elegirás tu horario activo (mañana / tarde) y el día de batch cooking.
-          </p>
+          <strong>Tu peso</strong>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <input
+              type="number"
+              inputMode="decimal"
+              placeholder="kg"
+              value={nuevoPeso}
+              onChange={(e) => setNuevoPeso(e.target.value)}
+              style={{
+                flex: 1, border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)',
+                padding: '10px 12px', fontSize: 15, fontFamily: 'inherit',
+              }}
+            />
+            <button
+              onClick={guardarPeso}
+              disabled={saving}
+              style={{
+                background: 'var(--sage-deep)', color: 'white', border: 'none',
+                borderRadius: 'var(--radius-sm)', padding: '0 18px', fontWeight: 600, fontSize: 14,
+              }}
+            >
+              Guardar
+            </button>
+          </div>
+
+          {pesos.length === 0 ? (
+            <p style={{ color: 'var(--ink-soft)', fontSize: 14, marginTop: 14 }}>Aún no has registrado ningún peso.</p>
+          ) : (
+            <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {pesos.slice(0, 6).map((p) => (
+                <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, borderBottom: '1px solid var(--line)', paddingBottom: 6 }}>
+                  <span style={{ color: 'var(--ink-soft)' }}>{p.fecha}</span>
+                  <span style={{ fontWeight: 600 }}>{p.peso} kg</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
+
+        <div className="card">
+          <strong>Horario activo</strong>
+          <p style={{ color: 'var(--ink-soft)', fontSize: 14, marginTop: 4, marginBottom: 14 }}>
+            Elige qué comidas forman tu día ahora mismo.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {horarios.map((h) => (
+              <button
+                key={h.id}
+                onClick={() => activarHorario(h.id)}
+                style={{
+                  textAlign: 'left',
+                  border: h.activo ? '1.5px solid var(--sage-deep)' : '1px solid var(--line)',
+                  background: h.activo ? 'rgba(143,168,137,0.10)' : 'white',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '12px 14px',
+                }}
+              >
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{h.nombre}</div>
+                <div style={{ color: 'var(--ink-soft)', fontSize: 13, marginTop: 2 }}>
+                  {(h.comidas_incluidas || []).join(' · ')}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="card">
+          <strong>Día de batch cooking</strong>
+          <p style={{ color: 'var(--ink-soft)', fontSize: 14, marginTop: 4, marginBottom: 14 }}>
+            Qué día sueles preparar la comida de la semana.
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {DIAS.map((d) => (
+              <button
+                key={d}
+                onClick={() => cambiarDiaBatch(d)}
+                style={{
+                  border: config?.dia_batch_cooking === d ? '1.5px solid var(--sage-deep)' : '1px solid var(--line)',
+                  background: config?.dia_batch_cooking === d ? 'var(--sage-deep)' : 'white',
+                  color: config?.dia_batch_cooking === d ? 'white' : 'var(--ink)',
+                  borderRadius: 999, padding: '7px 14px', fontSize: 13, fontWeight: 500,
+                }}
+              >
+                {DIAS_LABEL[d]}
+              </button>
+            ))}
+          </div>
+        </div>
+
       </div>
     </>
   )
