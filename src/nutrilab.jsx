@@ -13,14 +13,34 @@ const ESTADOS = ['pendiente', 'realizada', 'omitida']
 const ESTADO_LABEL = { pendiente: 'Pendiente', realizada: 'Realizada', omitida: 'Omitida' }
 const TIPO_COMIDA_LABEL = { desayuno: 'Desayuno', comida: 'Comida', merienda: 'Merienda', cena: 'Cena' }
 
+const SALUDOS = [
+  '¡Buenos días, Paula!', '¡Hola, Paula!', '¡Qué tal, Paula!',
+  '¡Buenas, Paula!', '¡Hola de nuevo, Paula!', '¡Bienvenida, Paula!',
+]
+const FRASES_MOTIVADORAS = [
+  'Un día más, un paso más cerca de tus objetivos.',
+  'Comer bien no es perfección, es constancia.',
+  'Hoy también puedes cuidarte sin complicarte.',
+  'Pequeñas decisiones, grandes resultados.',
+  'La organización de hoy es la tranquilidad de mañana.',
+  'Vas por buen camino, sigue así.',
+  'Cocinar con cariño también es cuidarte.',
+  'Cada comida es una oportunidad, no una obligación.',
+]
+
+function diaDelAño() {
+  const d = new Date()
+  const inicio = new Date(d.getFullYear(), 0, 0)
+  const diff = d - inicio
+  return Math.floor(diff / 86400000)
+}
+
 function ScreenHoy() {
   const [horarioHoy, setHorarioHoy] = useState(null)
-  const [comidasHoy, setComidasHoy] = useState([]) // filas de nutrilab_menu_semanal de hoy
+  const [comidasHoy, setComidasHoy] = useState([])
   const [loading, setLoading] = useState(true)
-  const [añadiendoTipo, setAñadiendoTipo] = useState(null)
-  const [textoNuevo, setTextoNuevo] = useState('')
-  const [editandoId, setEditandoId] = useState(null)
-  const [textoEdicion, setTextoEdicion] = useState('')
+  const [formAbiertoTipo, setFormAbiertoTipo] = useState(null) // tipo_comida para el que está abierto el form de "añadir"
+  const [editandoFila, setEditandoFila] = useState(null) // fila completa en edición
 
   const hoyStr = formatoFecha(new Date())
   const hoyLabelFecha = (() => {
@@ -29,11 +49,15 @@ function ScreenHoy() {
     return `${diaSemana}, ${d.getDate()} de ${mesLabel(hoyStr).toLowerCase()}`
   })()
 
+  const indiceDia = diaDelAño()
+  const saludo = SALUDOS[indiceDia % SALUDOS.length]
+  const frase = FRASES_MOTIVADORAS[indiceDia % FRASES_MOTIVADORAS.length]
+
   async function cargarTodo() {
     setLoading(true)
     const { data: dh } = await supabase.from('nutrilab_dias_horario').select('*, nutrilab_horarios(*)').eq('fecha', hoyStr).maybeSingle()
     setHorarioHoy(dh?.nutrilab_horarios || null)
-    const { data: cm } = await supabase.from('nutrilab_menu_semanal').select('*').eq('fecha', hoyStr)
+    const { data: cm } = await supabase.from('nutrilab_menu_semanal').select('*, receta:nutrilab_recetas(*)').eq('fecha', hoyStr)
     setComidasHoy(cm || [])
     setLoading(false)
   }
@@ -44,34 +68,30 @@ function ScreenHoy() {
     return comidasHoy.find((c) => c.tipo_comida === tipo) || null
   }
 
-  async function añadirComidaLibre(tipo) {
-    if (!textoNuevo.trim()) return
+  async function guardarNuevaComida(tipo, datosReceta) {
+    const recetaId = Date.now()
+    await sb.post('nutrilab_recetas', { id: recetaId, tipo_comida: tipo, ...datosReceta })
     await sb.post('nutrilab_menu_semanal', {
-      id: Date.now(),
+      id: recetaId + 1,
       fecha: hoyStr,
       tipo_comida: tipo,
-      nombre_libre: textoNuevo.trim(),
+      receta_id: recetaId,
       estado: 'pendiente',
     })
-    setTextoNuevo('')
-    setAñadiendoTipo(null)
+    setFormAbiertoTipo(null)
+    cargarTodo()
+  }
+
+  async function guardarEdicionReceta(fila, datosReceta) {
+    if (fila.receta_id) {
+      await supabase.from('nutrilab_recetas').update(datosReceta).eq('id', fila.receta_id)
+    }
+    setEditandoFila(null)
     cargarTodo()
   }
 
   async function cambiarEstado(fila, nuevoEstado) {
     await supabase.from('nutrilab_menu_semanal').update({ estado: nuevoEstado }).eq('id', fila.id)
-    cargarTodo()
-  }
-
-  function empezarEdicion(fila) {
-    setEditandoId(fila.id)
-    setTextoEdicion(fila.nombre_libre || '')
-  }
-
-  async function guardarEdicion(fila) {
-    if (!textoEdicion.trim()) return
-    await supabase.from('nutrilab_menu_semanal').update({ nombre_libre: textoEdicion.trim() }).eq('id', fila.id)
-    setEditandoId(null)
     cargarTodo()
   }
 
@@ -85,26 +105,9 @@ function ScreenHoy() {
       <>
         <div className="app-header">
           <p className="eyebrow">{hoyLabelFecha}</p>
-          <h1>¿Qué toca hoy?</h1>
+          <h1>{saludo}</h1>
         </div>
         <div className="app-content"><div className="empty-state"><p>Cargando…</p></div></div>
-      </>
-    )
-  }
-
-  if (!horarioHoy) {
-    return (
-      <>
-        <div className="app-header">
-          <p className="eyebrow">{hoyLabelFecha}</p>
-          <h1>¿Qué toca hoy?</h1>
-        </div>
-        <div className="app-content">
-          <div className="empty-state">
-            <span className="icon">🌿</span>
-            <p>Todavía no has asignado un horario a hoy.<br />Ve a la pestaña Menú y elige si hoy toca horario de mañana o de tarde.</p>
-          </div>
-        </div>
       </>
     )
   }
@@ -113,95 +116,195 @@ function ScreenHoy() {
     <>
       <div className="app-header">
         <p className="eyebrow">{hoyLabelFecha}</p>
-        <h1>¿Qué toca hoy?</h1>
+        <h1>{saludo}</h1>
+        <p style={{ color: 'var(--ink-soft)', fontSize: 14, marginTop: 6, fontStyle: 'italic' }}>{frase}</p>
       </div>
       <div className="app-content">
-        {(horarioHoy.comidas_incluidas || []).map((tipo) => {
-          const fila = filaDe(tipo)
-          return (
-            <div key={tipo} className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <strong style={{ fontSize: 14, color: 'var(--sage-deep)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
-                  {TIPO_COMIDA_LABEL[tipo]}
-                </strong>
-                {fila && fila.estado !== 'pendiente' && (
-                  <span style={{
-                    fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 999,
-                    background: fila.estado === 'realizada' ? 'rgba(143,168,137,0.18)' : 'rgba(199,123,94,0.15)',
-                    color: fila.estado === 'realizada' ? 'var(--sage-deep)' : '#C77B5E',
-                  }}>
-                    {ESTADO_LABEL[fila.estado]}
-                  </span>
+
+        {!horarioHoy ? (
+          <div className="empty-state">
+            <span className="icon">🌿</span>
+            <p>Todavía no has asignado un horario a hoy.<br />Ve a la pestaña Menú y elige si hoy toca horario de mañana o de tarde.</p>
+          </div>
+        ) : (
+          (horarioHoy.comidas_incluidas || []).map((tipo) => {
+            const fila = filaDe(tipo)
+            return (
+              <div key={tipo} className="card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <strong style={{ fontSize: 14, color: 'var(--sage-deep)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                    {TIPO_COMIDA_LABEL[tipo]}
+                  </strong>
+                  {fila && fila.estado !== 'pendiente' && (
+                    <span style={{
+                      fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 999,
+                      background: fila.estado === 'realizada' ? 'rgba(143,168,137,0.18)' : 'rgba(199,123,94,0.15)',
+                      color: fila.estado === 'realizada' ? 'var(--sage-deep)' : '#C77B5E',
+                    }}>
+                      {ESTADO_LABEL[fila.estado]}
+                    </span>
+                  )}
+                </div>
+
+                {!fila ? (
+                  formAbiertoTipo === tipo ? (
+                    <RecetaForm
+                      onCancel={() => setFormAbiertoTipo(null)}
+                      onGuardar={(datos) => guardarNuevaComida(tipo, datos)}
+                    />
+                  ) : (
+                    <button
+                      onClick={() => setFormAbiertoTipo(tipo)}
+                      style={{ marginTop: 12, background: 'none', border: '1px dashed var(--line)', borderRadius: 'var(--radius-sm)', padding: '10px', width: '100%', color: 'var(--ink-soft)', fontSize: 14 }}
+                    >
+                      + Añadir comida
+                    </button>
+                  )
+                ) : editandoFila?.id === fila.id ? (
+                  <RecetaForm
+                    inicial={fila.receta || {}}
+                    onCancel={() => setEditandoFila(null)}
+                    onGuardar={(datos) => guardarEdicionReceta(fila, datos)}
+                  />
+                ) : (
+                  <>
+                    <p style={{ fontSize: 16, fontFamily: 'var(--font-display)', margin: '10px 0 14px' }}>
+                      {fila.receta?.nombre || fila.nombre_libre || 'Comida'}
+                    </p>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {ESTADOS.map((e) => (
+                        <button
+                          key={e}
+                          onClick={() => cambiarEstado(fila, e)}
+                          style={{
+                            border: fila.estado === e ? '1.5px solid var(--sage-deep)' : '1px solid var(--line)',
+                            background: fila.estado === e ? 'var(--sage-deep)' : 'white',
+                            color: fila.estado === e ? 'white' : 'var(--ink)',
+                            borderRadius: 999, padding: '6px 12px', fontSize: 12.5, fontWeight: 500,
+                          }}
+                        >
+                          {ESTADO_LABEL[e]}
+                        </button>
+                      ))}
+                      {fila.receta && (
+                        <button onClick={() => setEditandoFila(fila)} style={{ background: 'none', border: 'none', color: 'var(--sage-deep)', fontSize: 12.5, padding: '6px 4px' }}>Editar</button>
+                      )}
+                      <button onClick={() => eliminarComida(fila)} style={{ background: 'none', border: 'none', color: '#C77B5E', fontSize: 12.5, padding: '6px 4px' }}>Eliminar</button>
+                    </div>
+                  </>
                 )}
               </div>
-
-              {!fila ? (
-                añadiendoTipo === tipo ? (
-                  <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                    <input
-                      autoFocus
-                      type="text"
-                      placeholder="¿Qué vas a comer?"
-                      value={textoNuevo}
-                      onChange={(e) => setTextoNuevo(e.target.value)}
-                      style={{ flex: 1, border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)', padding: '9px 12px', fontSize: 14, fontFamily: 'inherit' }}
-                    />
-                    <button
-                      onClick={() => añadirComidaLibre(tipo)}
-                      style={{ background: 'var(--sage-deep)', color: 'white', border: 'none', borderRadius: 'var(--radius-sm)', padding: '0 14px', fontWeight: 600, fontSize: 13 }}
-                    >
-                      Añadir
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => { setAñadiendoTipo(tipo); setTextoNuevo('') }}
-                    style={{ marginTop: 12, background: 'none', border: '1px dashed var(--line)', borderRadius: 'var(--radius-sm)', padding: '10px', width: '100%', color: 'var(--ink-soft)', fontSize: 14 }}
-                  >
-                    + Añadir comida
-                  </button>
-                )
-              ) : editandoId === fila.id ? (
-                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                  <input
-                    autoFocus
-                    type="text"
-                    value={textoEdicion}
-                    onChange={(e) => setTextoEdicion(e.target.value)}
-                    style={{ flex: 1, border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)', padding: '9px 12px', fontSize: 14, fontFamily: 'inherit' }}
-                  />
-                  <button onClick={() => guardarEdicion(fila)} style={{ background: 'var(--sage-deep)', color: 'white', border: 'none', borderRadius: 'var(--radius-sm)', padding: '0 14px', fontWeight: 600, fontSize: 13 }}>OK</button>
-                </div>
-              ) : (
-                <>
-                  <p style={{ fontSize: 16, fontFamily: 'var(--font-display)', margin: '10px 0 14px' }}>
-                    {fila.nombre_libre || 'Receta'}
-                  </p>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {ESTADOS.map((e) => (
-                      <button
-                        key={e}
-                        onClick={() => cambiarEstado(fila, e)}
-                        style={{
-                          border: fila.estado === e ? '1.5px solid var(--sage-deep)' : '1px solid var(--line)',
-                          background: fila.estado === e ? 'var(--sage-deep)' : 'white',
-                          color: fila.estado === e ? 'white' : 'var(--ink)',
-                          borderRadius: 999, padding: '6px 12px', fontSize: 12.5, fontWeight: 500,
-                        }}
-                      >
-                        {ESTADO_LABEL[e]}
-                      </button>
-                    ))}
-                    <button onClick={() => empezarEdicion(fila)} style={{ background: 'none', border: 'none', color: 'var(--sage-deep)', fontSize: 12.5, padding: '6px 4px' }}>Editar</button>
-                    <button onClick={() => eliminarComida(fila)} style={{ background: 'none', border: 'none', color: '#C77B5E', fontSize: 12.5, padding: '6px 4px' }}>Eliminar</button>
-                  </div>
-                </>
-              )}
-            </div>
-          )
-        })}
+            )
+          })
+        )}
       </div>
     </>
+  )
+}
+
+function campoEstilo() {
+  return { width: '100%', border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)', padding: '9px 12px', fontSize: 14, fontFamily: 'inherit', marginTop: 4 }
+}
+
+function RecetaForm({ inicial = {}, onGuardar, onCancel }) {
+  const [nombre, setNombre] = useState(inicial.nombre || '')
+  const [tiempo, setTiempo] = useState(inicial.tiempo_preparacion || '')
+  const [ingredientes, setIngredientes] = useState((inicial.ingredientes || []).join('\n'))
+  const [elaboracion, setElaboracion] = useState(inicial.elaboracion || '')
+  const [proteina, setProteina] = useState(inicial.proteina || '')
+  const [carbohidratos, setCarbohidratos] = useState(inicial.carbohidratos || '')
+  const [grasas, setGrasas] = useState(inicial.grasas || '')
+  const [kcal, setKcal] = useState(inicial.kcal || '')
+  const [aptaTapper, setAptaTapper] = useState(inicial.apta_tapper || false)
+  const [preparableAntelacion, setPreparableAntelacion] = useState(inicial.preparable_antelacion || false)
+  const [guardarBiblioteca, setGuardarBiblioteca] = useState(inicial.en_biblioteca ?? false)
+
+  function num(v) { return v === '' ? null : parseFloat(String(v).replace(',', '.')) }
+
+  function submit() {
+    if (!nombre.trim()) return
+    onGuardar({
+      nombre: nombre.trim(),
+      descripcion: '',
+      ingredientes: ingredientes.split('\n').map((i) => i.trim()).filter(Boolean),
+      elaboracion: elaboracion.trim(),
+      tiempo_preparacion: num(tiempo),
+      proteina: num(proteina),
+      carbohidratos: num(carbohidratos),
+      grasas: num(grasas),
+      kcal: num(kcal),
+      apta_tapper: aptaTapper,
+      preparable_antelacion: preparableAntelacion,
+      etiquetas: [],
+      en_biblioteca: guardarBiblioteca,
+    })
+  }
+
+  return (
+    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div>
+        <label style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Nombre</label>
+        <input autoFocus type="text" value={nombre} onChange={(e) => setNombre(e.target.value)} style={campoEstilo()} placeholder="Ej. Tortilla de calabacín" />
+      </div>
+
+      <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Tiempo (min)</label>
+          <input type="number" value={tiempo} onChange={(e) => setTiempo(e.target.value)} style={campoEstilo()} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Kcal aprox.</label>
+          <input type="number" value={kcal} onChange={(e) => setKcal(e.target.value)} style={campoEstilo()} />
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Proteína (g)</label>
+          <input type="number" value={proteina} onChange={(e) => setProteina(e.target.value)} style={campoEstilo()} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Carbos (g)</label>
+          <input type="number" value={carbohidratos} onChange={(e) => setCarbohidratos(e.target.value)} style={campoEstilo()} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Grasas (g)</label>
+          <input type="number" value={grasas} onChange={(e) => setGrasas(e.target.value)} style={campoEstilo()} />
+        </div>
+      </div>
+
+      <div>
+        <label style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Ingredientes (uno por línea)</label>
+        <textarea value={ingredientes} onChange={(e) => setIngredientes(e.target.value)} style={{ ...campoEstilo(), minHeight: 64, resize: 'vertical' }} />
+      </div>
+
+      <div>
+        <label style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Elaboración</label>
+        <textarea value={elaboracion} onChange={(e) => setElaboracion(e.target.value)} style={{ ...campoEstilo(), minHeight: 64, resize: 'vertical' }} />
+      </div>
+
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5 }}>
+        <input type="checkbox" checked={aptaTapper} onChange={(e) => setAptaTapper(e.target.checked)} />
+        Apta para táper
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5 }}>
+        <input type="checkbox" checked={preparableAntelacion} onChange={(e) => setPreparableAntelacion(e.target.checked)} />
+        Se puede preparar con antelación
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, fontWeight: 600, marginTop: 4 }}>
+        <input type="checkbox" checked={guardarBiblioteca} onChange={(e) => setGuardarBiblioteca(e.target.checked)} />
+        Guardar en mi recetario
+      </label>
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+        <button onClick={submit} style={{ flex: 1, background: 'var(--sage-deep)', color: 'white', border: 'none', borderRadius: 'var(--radius-sm)', padding: '10px', fontWeight: 600, fontSize: 14 }}>
+          Guardar
+        </button>
+        <button onClick={onCancel} style={{ background: 'none', border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)', padding: '10px 16px', fontSize: 14, color: 'var(--ink-soft)' }}>
+          Cancelar
+        </button>
+      </div>
+    </div>
   )
 }
 
