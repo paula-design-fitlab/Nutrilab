@@ -1,5 +1,5 @@
 // netlify/functions/batch-plan.js
-// Genera el plan de Batch Ingredientes usando Claude a partir del menú semanal
+const https = require('https')
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
@@ -9,81 +9,99 @@ exports.handler = async (event) => {
   let payload
   try {
     payload = JSON.parse(event.body)
-  } catch {
-    return { statusCode: 400, body: 'Invalid JSON' }
+  } catch (e) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'JSON inválido', detail: e.message }) }
   }
 
   const { recetas_semana, dia_batch } = payload
-  // recetas_semana: array de objetos { tipo_comida, nombre, ingredientes, batch_ingredientes }
 
-  const prompt = `Eres el asistente de nutrición de NutriLab. Tu tarea es generar el plan de Batch Ingredientes para esta semana.
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) {
+    return { statusCode: 500, body: JSON.stringify({ error: 'Falta ANTHROPIC_API_KEY en variables de entorno de Netlify' }) }
+  }
 
-El menú semanal incluye estas recetas:
+  const prompt = `Eres el asistente de nutrición de NutriLab. Genera el plan de Batch Ingredientes para esta semana.
+
+Menú semanal:
 ${JSON.stringify(recetas_semana, null, 2)}
 
-El día elegido para cocinar es: ${dia_batch || 'domingo'}
+Día elegido para cocinar: ${dia_batch || 'domingo'}
 
-Analiza los ingredientes de estas recetas y genera un plan de Batch Ingredientes. Responde SOLO con un JSON válido, sin texto adicional, sin bloques de código markdown, con esta estructura exacta:
+Responde SOLO con JSON válido, sin texto ni bloques markdown:
 
 {
-  "notas": "Breve descripción del plan (1-2 frases)",
+  "notas": "Breve descripción del plan",
   "items": [
     {
-      "nombre": "nombre del ingrediente batch (ej: Pollo cocinado)",
-      "categoria": "proteina | hidrato | verdura | salsa_base",
+      "nombre": "Pollo cocinado",
+      "categoria": "proteina",
       "cantidad_preparar": 500,
-      "unidad": "g | unidades | bote | porción",
-      "recetas_asociadas": ["nombre receta 1", "nombre receta 2"],
+      "unidad": "g",
+      "recetas_asociadas": ["receta 1", "receta 2"],
       "duracion_nevera_dias": 3,
       "congelable": true,
       "metodo_preparacion": "Cómo prepararlo en 1 frase",
       "orden_preparacion": 1,
-      "momento": "domingo | mitad_semana",
-      "observaciones": "consejo útil o null"
+      "momento": "domingo",
+      "observaciones": null
     }
   ]
 }
 
 Reglas:
-- Solo incluye ingredientes que realmente aparecen en las recetas del menú y que tengan sentido preparar con antelación (pollo, arroz, patatas, huevos, verduras, salsas base...).
-- Calcula cantidades sumando las que aparecen en las recetas, añadiendo un 10-15% extra si el ingrediente se usa en 3 o más recetas.
-- Ordena los items por orden_preparacion (1 primero) de más a menos tiempo de cocción.
-- Pon en momento "mitad_semana" solo si el ingrediente dura menos de 4 días en nevera o es una ensalada/vegetal fresco.
-- El total de tiempo de preparación no debe superar 2 horas.
-- Máximo 8 items en total.`
+- Solo ingredientes que aparecen en el menú y tienen sentido preparar con antelación.
+- Calcula cantidades reales según las recetas.
+- Ordena por tiempo de cocción (más largo primero).
+- momento "mitad_semana" solo si dura menos de 4 días en nevera.
+- Máximo 8 items, máximo 2 horas de preparación total.`
 
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
+  const body = JSON.stringify({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 2000,
+    messages: [{ role: 'user', content: prompt }],
+  })
+
+  return new Promise((resolve) => {
+    const req = https.request(
+      {
+        hostname: 'api.anthropic.com',
+        path: '/v1/messages',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'Content-Length': Buffer.byteLength(body),
+        },
       },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 2000,
-        messages: [{ role: 'user', content: prompt }],
-      }),
+      (res) => {
+        let data = ''
+        res.on('data', (chunk) => { data += chunk })
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data)
+            if (parsed.error) {
+              resolve({ statusCode: 500, body: JSON.stringify({ error: 'Error de API Anthropic', detail: parsed.error.message }) })
+              return
+            }
+            const texto = parsed.content?.[0]?.text || ''
+            const limpio = texto.replace(/```json|```/g, '').trim()
+            const resultado = JSON.parse(limpio)
+            resolve({
+              statusCode: 200,
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(resultado),
+            })
+          } catch (e) {
+            resolve({ statusCode: 500, body: JSON.stringify({ error: 'Error parseando respuesta', detail: e.message }) })
+          }
+        })
+      }
+    )
+    req.on('error', (e) => {
+      resolve({ statusCode: 500, body: JSON.stringify({ error: 'Error de red', detail: e.message }) })
     })
-
-    const data = await response.json()
-    const texto = data.content?.[0]?.text || ''
-
-    // Limpiar posibles bloques markdown y parsear
-    const limpio = texto.replace(/```json|```/g, '').trim()
-    const plan = JSON.parse(limpio)
-
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(plan),
-    }
-  } catch (err) {
-    console.error('Error generando batch plan:', err)
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'Error generando el plan', detail: err.message }),
-    }
-  }
+    req.write(body)
+    req.end()
+  })
 }

@@ -1,5 +1,5 @@
 // netlify/functions/menu-semanal.js
-// Genera el menú semanal completo usando Claude
+const https = require('https')
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
@@ -9,26 +9,33 @@ exports.handler = async (event) => {
   let payload
   try {
     payload = JSON.parse(event.body)
-  } catch {
-    return { statusCode: 400, body: 'Invalid JSON' }
+  } catch (e) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'JSON inválido', detail: e.message }) }
   }
 
   const { dias, recetas } = payload
-  // dias: [{ fecha, tipo_comida: ['comida','cena',...] }]
-  // recetas: [{ id, nombre, categoria, subcategoria, calorias, proteina, hidratos, grasas, etiquetas, taper, batch_ingredientes }]
 
-  const prompt = `Eres el planificador de menús de NutriLab. Tu tarea es generar un menú semanal equilibrado.
+  if (!dias || dias.length === 0) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'No hay días con horario asignado' }) }
+  }
 
-Esta semana, los días y comidas a planificar son:
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) {
+    return { statusCode: 500, body: JSON.stringify({ error: 'Falta ANTHROPIC_API_KEY en variables de entorno de Netlify' }) }
+  }
+
+  const prompt = `Eres el planificador de menús de NutriLab. Genera un menú semanal equilibrado.
+
+Días y comidas a planificar:
 ${JSON.stringify(dias, null, 2)}
 
-El recetario disponible es:
+Recetario disponible:
 ${JSON.stringify(recetas, null, 2)}
 
-Genera un menú semanal equilibrado. Responde SOLO con un JSON válido, sin texto adicional ni bloques markdown:
+Responde SOLO con JSON válido, sin texto ni bloques markdown:
 
 {
-  "notas": "Breve descripción del menú (1-2 frases)",
+  "notas": "Breve descripción del menú",
   "menu": [
     {
       "fecha": "2026-06-29",
@@ -40,45 +47,59 @@ Genera un menú semanal equilibrado. Responde SOLO con un JSON válido, sin text
 }
 
 Reglas:
-- Asigna exactamente una receta por cada combinación fecha+tipo_comida que aparece en "dias".
-- Usa solo recetas del recetario cuya categoria coincida con el tipo_comida (desayuno→desayuno, comida→comida o cocina de siempre, merienda→merienda, cena→cena).
-- No repitas la misma receta más de 2 veces en la semana.
-- Busca equilibrio calórico entre días (evita días extremos).
-- Varía las proteínas (no pollo todos los días de comida).
-- Para cenas, prioriza recetas de categoría "cena".
-- Para comidas, alterna entre "comida" y "cocina de siempre".
-- Devuelve exactamente el mismo número de items que combinaciones fecha+tipo_comida hay en "dias".`
+- Asigna exactamente una receta por cada combinación fecha+tipo_comida de "dias".
+- Usa solo recetas cuya categoria coincida: desayuno→desayuno, comida→comida o cocina de siempre, merienda→merienda, cena→cena.
+- No repitas la misma receta más de 2 veces.
+- Equilibra calorías entre días.
+- Varía las proteínas (no pollo todos los días).`
 
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
+  const body = JSON.stringify({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 3000,
+    messages: [{ role: 'user', content: prompt }],
+  })
+
+  return new Promise((resolve) => {
+    const req = https.request(
+      {
+        hostname: 'api.anthropic.com',
+        path: '/v1/messages',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'Content-Length': Buffer.byteLength(body),
+        },
       },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 3000,
-        messages: [{ role: 'user', content: prompt }],
-      }),
+      (res) => {
+        let data = ''
+        res.on('data', (chunk) => { data += chunk })
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data)
+            if (parsed.error) {
+              resolve({ statusCode: 500, body: JSON.stringify({ error: 'Error de API Anthropic', detail: parsed.error.message }) })
+              return
+            }
+            const texto = parsed.content?.[0]?.text || ''
+            const limpio = texto.replace(/```json|```/g, '').trim()
+            const resultado = JSON.parse(limpio)
+            resolve({
+              statusCode: 200,
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(resultado),
+            })
+          } catch (e) {
+            resolve({ statusCode: 500, body: JSON.stringify({ error: 'Error parseando respuesta', detail: e.message, raw: data.slice(0, 200) }) })
+          }
+        })
+      }
+    )
+    req.on('error', (e) => {
+      resolve({ statusCode: 500, body: JSON.stringify({ error: 'Error de red', detail: e.message }) })
     })
-
-    const data = await response.json()
-    const texto = data.content?.[0]?.text || ''
-    const limpio = texto.replace(/```json|```/g, '').trim()
-    const resultado = JSON.parse(limpio)
-
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(resultado),
-    }
-  } catch (err) {
-    console.error('Error generando menú:', err)
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'Error generando el menú', detail: err.message }),
-    }
-  }
+    req.write(body)
+    req.end()
+  })
 }
