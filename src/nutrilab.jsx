@@ -1292,6 +1292,134 @@ function BatchItem({ item }) {
 }
 
 
+// ─── Recetario: constantes y componentes ──────────────────────────────────────
+
+const CATEGORIAS = [
+  { id: 'todas', label: 'Todas' },
+  { id: 'desayuno', label: 'Desayunos' },
+  { id: 'comida', label: 'Comidas' },
+  { id: 'cena', label: 'Cenas' },
+  { id: 'merienda', label: 'Meriendas' },
+  { id: 'cocina de siempre', label: 'Clásicas' },
+  { id: 'recetas base', label: 'Bases' },
+]
+
+const GRUPO_LABEL = {
+  proteina: '🥩 Proteína', hidrato: '🌾 Hidratos', verdura: '🥦 Verdura',
+  fruta: '🍎 Fruta', lacteo: '🥛 Lácteo', grasa: '🫒 Grasa',
+  salsa: '🥄 Salsa', condimento: '🧂 Condimento', otro: '📦 Otro',
+}
+
+const chipEstilo = {
+  fontSize: 12, fontWeight: 500, padding: '4px 10px',
+  borderRadius: 999, border: '1px solid var(--line)', background: 'white',
+  color: 'var(--ink-soft)',
+}
+
+function FichaReceta({ receta, onCerrar }) {
+  const ingredientesPorGrupo = (receta.ingredientes || []).reduce((acc, ing) => {
+    const g = ing.grupo || 'otro'
+    if (!acc[g]) acc[g] = []
+    acc[g].push(ing)
+    return acc
+  }, {})
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'var(--cream)', zIndex: 100, overflowY: 'auto', maxWidth: 480, margin: '0 auto' }}>
+      <div style={{ padding: '20px 20px 100px' }}>
+        <button onClick={onCerrar} style={{ background: 'none', border: 'none', color: 'var(--sage-deep)', fontSize: 14, fontWeight: 600, padding: 0, marginBottom: 16 }}>
+          ← Volver
+        </button>
+        <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--sage-deep)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 6px' }}>
+          {receta.categoria}{receta.subcategoria ? ` · ${receta.subcategoria}` : ''}
+        </p>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, margin: '0 0 8px', lineHeight: 1.2 }}>{receta.nombre}</h2>
+        <p style={{ color: 'var(--ink-soft)', fontSize: 14, margin: '0 0 20px' }}>{receta.descripcion}</p>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
+          {receta.tiempo_minutos && <span style={chipEstilo}>{receta.tiempo_minutos} min</span>}
+          {receta.dificultad && <span style={chipEstilo}>{receta.dificultad}</span>}
+          {receta.taper && <span style={{ ...chipEstilo, background: 'rgba(143,168,137,0.15)', color: 'var(--sage-deep)' }}>📦 Táper</span>}
+          {receta.batch_ingredientes && <span style={{ ...chipEstilo, background: 'rgba(143,168,137,0.15)', color: 'var(--sage-deep)' }}>♻️ Batch</span>}
+        </div>
+
+        {receta.calorias && (
+          <div className="card" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4, textAlign: 'center', padding: 14, marginBottom: 14 }}>
+            {[
+              { label: 'kcal', val: receta.calorias },
+              { label: 'prot', val: receta.proteina ? `${receta.proteina}g` : '—' },
+              { label: 'carb', val: receta.hidratos ? `${receta.hidratos}g` : '—' },
+              { label: 'gras', val: receta.grasas ? `${receta.grasas}g` : '—' },
+              { label: 'fibra', val: receta.fibra ? `${receta.fibra}g` : '—' },
+            ].map(({ label, val }) => (
+              <div key={label}>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>{val}</div>
+                <div style={{ fontSize: 11, color: 'var(--ink-soft)', marginTop: 2 }}>{label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="card" style={{ marginBottom: 14 }}>
+          <strong>Ingredientes</strong>
+          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {Object.entries(ingredientesPorGrupo).map(([grupo, ings]) => (
+              <div key={grupo}>
+                <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 6px' }}>
+                  {GRUPO_LABEL[grupo] || grupo}
+                </p>
+                {ings.map((ing, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, paddingBottom: 4 }}>
+                    <span>{ing.nombre}</span>
+                    <span style={{ color: 'var(--ink-soft)' }}>{ing.cantidad} {ing.unidad}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {(receta.elaboracion || []).length > 0 && (
+          <div className="card" style={{ marginBottom: 14 }}>
+            <strong>Elaboración</strong>
+            <ol style={{ margin: '12px 0 0', paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {receta.elaboracion.map((paso, i) => (
+                <li key={i} style={{ fontSize: 14, lineHeight: 1.5 }}>{paso}</li>
+              ))}
+            </ol>
+          </div>
+        )}
+
+        {(receta.conservacion || receta.congelacion) && (
+          <div className="card" style={{ marginBottom: 14 }}>
+            <strong>Conservación</strong>
+            {receta.conservacion && <p style={{ fontSize: 14, color: 'var(--ink-soft)', margin: '8px 0 0' }}>🧊 Nevera: {receta.conservacion}</p>}
+            {receta.congelacion && <p style={{ fontSize: 14, color: 'var(--ink-soft)', margin: '6px 0 0' }}>❄️ Congelador: {receta.congelacion}</p>}
+          </div>
+        )}
+
+        {(receta.consejos || []).length > 0 && (
+          <div className="card" style={{ marginBottom: 14 }}>
+            <strong>Consejos</strong>
+            <ul style={{ margin: '10px 0 0', paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {receta.consejos.map((c, i) => <li key={i} style={{ fontSize: 14 }}>{c}</li>)}
+            </ul>
+          </div>
+        )}
+
+        {(receta.variantes || []).length > 0 && (
+          <div className="card">
+            <strong>Variantes</strong>
+            <ul style={{ margin: '10px 0 0', paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {receta.variantes.map((v, i) => <li key={i} style={{ fontSize: 14 }}>{v}</li>)}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function ScreenRecetario() {
   const [recetas, setRecetas] = useState([])
   const [loading, setLoading] = useState(true)
