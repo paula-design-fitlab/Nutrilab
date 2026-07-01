@@ -609,7 +609,10 @@ function MenuSemanalGrid({ fechasSemana, diasHorario, horarios, semanaInicioStr,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dias, recetas }),
       })
-      if (!res.ok) throw new Error('Error en función serverless')
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || `Error ${res.status}`)
+      }
       const resultado = await res.json()
 
       // Borrar menú existente de la semana y guardar el nuevo
@@ -625,8 +628,8 @@ function MenuSemanalGrid({ fechasSemana, diasHorario, horarios, semanaInicioStr,
       if (filas.length > 0) await supabase.from('nutrilab_menu_semanal').insert(filas)
 
       await cargarMenu()
-    } catch {
-      setError('No se pudo generar el menú. Inténtalo de nuevo.')
+    } catch (err) {
+      setError(`Error: ${err.message}`)
     }
     setGenerando(false)
   }
