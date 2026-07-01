@@ -1031,6 +1031,7 @@ function RecetaPicker({ tipo, onSeleccionar, onCerrar }) {
 }
 
 
+const CAT_BATCH_LABEL = { proteina: '🥩 Proteína', hidrato: '🌾 Hidratos', verdura: '🥦 Verdura', salsa_base: '🥄 Salsas y bases' }
 const CAT_BATCH_ORDER = { proteina: 0, hidrato: 1, verdura: 2, salsa_base: 3 }
 
 function BatchSection({ semanaInicioStr, diaBatch }) {
