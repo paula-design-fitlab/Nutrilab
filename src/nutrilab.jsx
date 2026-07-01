@@ -351,6 +351,7 @@ function ScreenMenu() {
   const [loading, setLoading] = useState(true)
   const [guardando, setGuardando] = useState(false)
   const [guardado, setGuardado] = useState(false)
+  const [contextoIA, setContextoIA] = useState('')
 
   const lunes = lunesDeEstaSemana()
   const fechasSemana = DIAS_SEMANA.map((_, i) => {
@@ -519,16 +520,86 @@ function ScreenMenu() {
           {guardando ? 'Guardando…' : guardado ? 'Guardado ✓' : 'Guardar cambios'}
         </button>
 
+        <ContextoSemana onContextoChange={(ctx) => setContextoIA(ctx)} />
+
         <MenuSemanalGrid
           fechasSemana={fechasSemana}
           diasHorario={diasHorario}
           horarios={horarios}
           semanaInicioStr={semanaInicioStr}
           hoyStr={hoyStr}
+          contextoIA={contextoIA}
         />
 
       </div>
     </>
+  )
+}
+
+// ─── Contexto IA de la semana ─────────────────────────────────────────────────
+
+function ContextoSemana({ onContextoChange }) {
+  const [texto, setTexto] = useState('')
+  const [abierto, setAbierto] = useState(false)
+
+  function guardar() {
+    onContextoChange(texto)
+    setAbierto(false)
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <strong style={{ fontSize: 14 }}>💬 Cuéntame tu semana</strong>
+          {texto && !abierto && (
+            <p style={{ fontSize: 12, color: 'var(--sage-deep)', margin: '2px 0 0', fontStyle: 'italic' }}>
+              Contexto guardado ✓
+            </p>
+          )}
+        </div>
+        <button
+          onClick={() => setAbierto((v) => !v)}
+          style={{ background: 'none', border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)', padding: '6px 12px', fontSize: 13, color: 'var(--ink-soft)' }}
+        >
+          {abierto ? 'Cerrar' : texto ? 'Editar' : 'Abrir'}
+        </button>
+      </div>
+
+      {abierto && (
+        <div style={{ marginTop: 14 }}>
+          <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '0 0 10px', lineHeight: 1.5 }}>
+            Explícame cómo va a ser tu semana. La IA lo tendrá en cuenta al generar el menú.
+          </p>
+          <p style={{ fontSize: 12, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
+            Por ejemplo: "Esta semana voy muy justa de tiempo, entreno lunes y jueves, el miércoles como fuera con compañeras de trabajo y el viernes probablemente no tenga ganas de cocinar."
+          </p>
+          <textarea
+            autoFocus
+            value={texto}
+            onChange={(e) => setTexto(e.target.value)}
+            placeholder="Cuéntame lo que necesitas…"
+            style={{
+              width: '100%', border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)',
+              padding: '10px 12px', fontSize: 14, fontFamily: 'inherit',
+              minHeight: 100, resize: 'vertical', lineHeight: 1.5,
+            }}
+          />
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <button onClick={guardar}
+              style={{ flex: 1, background: 'var(--sage-deep)', color: 'white', border: 'none', borderRadius: 'var(--radius-sm)', padding: '10px', fontWeight: 600, fontSize: 14 }}>
+              Guardar contexto
+            </button>
+            {texto && (
+              <button onClick={() => { setTexto(''); onContextoChange('') }}
+                style={{ background: 'none', border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', fontSize: 13, color: '#C77B5E' }}>
+                Borrar
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -621,7 +692,7 @@ function ModalPreguntas({ fechasSemana, onConfirmar, onCancelar }) {
   )
 }
 
-function MenuSemanalGrid({ fechasSemana, diasHorario, horarios, semanaInicioStr, hoyStr }) {
+function MenuSemanalGrid({ fechasSemana, diasHorario, horarios, semanaInicioStr, hoyStr, contextoIA }) {
   const [menu, setMenu] = useState({})
   const [borrador, setBorrador] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -707,7 +778,7 @@ function MenuSemanalGrid({ fechasSemana, diasHorario, horarios, semanaInicioStr,
       const res = await fetch('/.netlify/functions/menu-semanal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dias, recetas, preferencias }),
+        body: JSON.stringify({ dias, recetas, preferencias, contextoIA }),
       })
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}))
@@ -967,6 +1038,8 @@ function BatchSection({ semanaInicioStr, diaBatch }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [generando, setGenerando] = useState(false)
+  const [guardando, setGuardando] = useState(false)
+  const [planBorrador, setPlanBorrador] = useState(null)
   const [error, setError] = useState(null)
 
   useEffect(() => {
@@ -977,6 +1050,9 @@ function BatchSection({ semanaInicioStr, diaBatch }) {
         setPlan(p)
         const { data: it } = await supabase.from('nutrilab_batch_items').select('*').eq('plan_id', p.id).order('orden_preparacion')
         setItems(it || [])
+      } else {
+        setPlan(null)
+        setItems([])
       }
       setLoading(false)
     }
@@ -987,7 +1063,6 @@ function BatchSection({ semanaInicioStr, diaBatch }) {
     setGenerando(true)
     setError(null)
 
-    // 1. Obtener recetas del menú de esta semana
     const fechaFin = (() => {
       const d = new Date(semanaInicioStr + 'T00:00:00')
       d.setDate(d.getDate() + 6)
@@ -1010,7 +1085,7 @@ function BatchSection({ semanaInicioStr, diaBatch }) {
       }))
 
     if (recetasSemana.length === 0) {
-      setError('No hay recetas planificadas esta semana. Planifica tu menú primero.')
+      setError('No hay recetas guardadas en el menú esta semana. Ve a Menú, genera y guarda tu menú primero.')
       setGenerando(false)
       return
     }
@@ -1022,118 +1097,151 @@ function BatchSection({ semanaInicioStr, diaBatch }) {
         body: JSON.stringify({ recetas_semana: recetasSemana, dia_batch: diaBatch || 'domingo' }),
       })
 
-      if (!res.ok) throw new Error('Error en la función serverless')
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || `Error ${res.status}`)
+      }
       const planData = await res.json()
 
-      // 2. Guardar plan en Supabase
-      const planId = Date.now()
-      if (plan) {
-        await supabase.from('nutrilab_batch_items').delete().eq('plan_id', plan.id)
-        await supabase.from('nutrilab_batch_plan').delete().eq('id', plan.id)
+      if (!planData.items || planData.items.length === 0) {
+        throw new Error('La IA no devolvió ingredientes. Inténtalo de nuevo.')
       }
-      await supabase.from('nutrilab_batch_plan').insert({
-        id: planId,
-        semana_inicio: semanaInicioStr,
-        dia_preparacion: diaBatch || 'domingo',
-        notas: planData.notas || '',
-      })
 
-      const itemsInsert = (planData.items || []).map((it, i) => ({
-        id: planId + i + 1,
-        plan_id: planId,
-        nombre: it.nombre,
-        categoria: it.categoria,
-        cantidad_preparar: it.cantidad_preparar,
-        unidad: it.unidad,
-        recetas_asociadas: it.recetas_asociadas || [],
-        duracion_nevera_dias: it.duracion_nevera_dias,
-        congelable: it.congelable || false,
-        metodo_preparacion: it.metodo_preparacion,
+      // Normalizar momento: cualquier valor que no sea mitad_semana → 'batch_day'
+      const itemsNorm = planData.items.map((it, i) => ({
+        id: Date.now() + i + 1,
+        plan_id: 0, // placeholder, se asigna al guardar
+        nombre: it.nombre || 'Ingrediente',
+        categoria: ['proteina','hidrato','verdura','salsa_base'].includes(it.categoria) ? it.categoria : 'otro',
+        cantidad_preparar: it.cantidad_preparar || null,
+        unidad: it.unidad || '',
+        recetas_asociadas: Array.isArray(it.recetas_asociadas) ? it.recetas_asociadas : [],
+        duracion_nevera_dias: it.duracion_nevera_dias || null,
+        congelable: !!it.congelable,
+        metodo_preparacion: it.metodo_preparacion || '',
         orden_preparacion: it.orden_preparacion || i + 1,
-        momento: it.momento || 'domingo',
+        momento: it.momento === 'mitad_semana' ? 'mitad_semana' : 'batch_day',
         observaciones: it.observaciones || null,
       }))
 
-      await supabase.from('nutrilab_batch_items').insert(itemsInsert)
-
-      setPlan({ id: planId, notas: planData.notas })
-      setItems(itemsInsert)
+      setPlanBorrador({ notas: planData.notas || '', items: itemsNorm })
     } catch (err) {
-      setError('No se pudo generar el plan. Inténtalo de nuevo.')
+      setError(`Error: ${err.message}`)
     }
     setGenerando(false)
   }
 
-  const itemsDomingo = items.filter((i) => i.momento === 'domingo').sort((a, b) => a.orden_preparacion - b.orden_preparacion)
-  const itemsMitad = items.filter((i) => i.momento === 'mitad_semana')
+  async function guardarPlan() {
+    if (!planBorrador) return
+    setGuardando(true)
+
+    const planId = Date.now()
+    if (plan) {
+      await supabase.from('nutrilab_batch_items').delete().eq('plan_id', plan.id)
+      await supabase.from('nutrilab_batch_plan').delete().eq('id', plan.id)
+    }
+
+    const { error: errPlan } = await supabase.from('nutrilab_batch_plan').insert({
+      id: planId,
+      semana_inicio: semanaInicioStr,
+      dia_preparacion: diaBatch || 'domingo',
+      notas: planBorrador.notas,
+    })
+
+    if (!errPlan) {
+      const filas = planBorrador.items.map((it) => ({ ...it, plan_id: planId }))
+      await supabase.from('nutrilab_batch_items').insert(filas)
+    }
+
+    setPlan({ id: planId, notas: planBorrador.notas })
+    setItems(planBorrador.items.map((it) => ({ ...it, plan_id: planId })))
+    setPlanBorrador(null)
+    setGuardando(false)
+  }
+
+  const itemsActuales = planBorrador?.items || items
+  const notasActuales = planBorrador?.notas || plan?.notas
+  const itemsBatchDay = itemsActuales.filter((i) => i.momento !== 'mitad_semana').sort((a, b) => a.orden_preparacion - b.orden_preparacion)
+  const itemsMitad = itemsActuales.filter((i) => i.momento === 'mitad_semana')
 
   return (
-    <div className="card" style={{ marginTop: 8 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: plan ? 12 : 0 }}>
-        <strong>Batch Ingredientes</strong>
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <strong style={{ fontSize: 15 }}>Plan de preparación</strong>
         <button
           onClick={generarPlan}
           disabled={generando}
-          style={{
-            background: 'var(--sage-deep)', color: 'white', border: 'none',
-            borderRadius: 'var(--radius-sm)', padding: '7px 14px', fontSize: 13, fontWeight: 600,
-          }}
+          style={{ background: 'var(--sage-deep)', color: 'white', border: 'none', borderRadius: 'var(--radius-sm)', padding: '8px 14px', fontSize: 13, fontWeight: 600 }}
         >
-          {generando ? 'Generando…' : plan ? '↺ Regenerar' : '✨ Generar plan'}
+          {generando ? 'Generando…' : (plan || planBorrador) ? '↺ Regenerar' : '✨ Generar plan'}
         </button>
       </div>
 
-      {error && <p style={{ color: '#C77B5E', fontSize: 13, marginTop: 10 }}>{error}</p>}
+      {error && <p style={{ color: '#C77B5E', fontSize: 13, marginBottom: 10 }}>{error}</p>}
+      {loading && <p style={{ color: 'var(--ink-soft)', fontSize: 14 }}>Cargando…</p>}
 
-      {loading && <p style={{ color: 'var(--ink-soft)', fontSize: 14, marginTop: 10 }}>Cargando…</p>}
-
-      {!loading && !plan && !error && (
-        <p style={{ color: 'var(--ink-soft)', fontSize: 14, marginTop: 10, lineHeight: 1.5 }}>
-          Genera tu plan de batch ingredientes una vez hayas planificado el menú de la semana.
-        </p>
+      {!loading && !plan && !planBorrador && !error && (
+        <div className="empty-state">
+          <span className="icon">♻️</span>
+          <p>Genera tu plan de preparación una vez hayas guardado el menú de la semana.</p>
+        </div>
       )}
 
-      {plan && items.length > 0 && (
-        <>
-          {plan.notas && <p style={{ color: 'var(--ink-soft)', fontSize: 13, fontStyle: 'italic', marginBottom: 16 }}>{plan.notas}</p>}
+      {planBorrador && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+          <button onClick={guardarPlan} disabled={guardando}
+            style={{ flex: 1, background: 'var(--sage-deep)', color: 'white', border: 'none', borderRadius: 'var(--radius-sm)', padding: '11px', fontWeight: 700, fontSize: 14 }}>
+            {guardando ? 'Guardando…' : '✓ Guardar plan'}
+          </button>
+          <button onClick={() => setPlanBorrador(null)}
+            style={{ background: 'none', border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)', padding: '11px 14px', fontSize: 14, color: 'var(--ink-soft)' }}>
+            Descartar
+          </button>
+        </div>
+      )}
 
-          {itemsDomingo.length > 0 && (
-            <>
-              <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--sage-deep)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
-                Preparar el {diaBatch || 'domingo'}
+      {(plan || planBorrador) && itemsActuales.length > 0 && (
+        <>
+          {notasActuales && (
+            <p style={{ color: 'var(--ink-soft)', fontSize: 13, fontStyle: 'italic', marginBottom: 16 }}>{notasActuales}</p>
+          )}
+
+          {itemsBatchDay.length > 0 && (
+            <div className="card" style={{ marginBottom: 12 }}>
+              <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--sage-deep)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 12px' }}>
+                Preparar el {DIAS_SEMANA_LABEL[diaBatch] || diaBatch || 'día elegido'}
               </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 18 }}>
-                {itemsDomingo.map((it) => (
-                  <BatchItem key={it.id} item={it} />
-                ))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {itemsBatchDay.map((it) => <BatchItem key={it.id} item={it} />)}
               </div>
-            </>
+            </div>
           )}
 
           {itemsMitad.length > 0 && (
-            <>
-              <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--peach)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+            <div className="card" style={{ marginBottom: 12 }}>
+              <p style={{ fontSize: 12, fontWeight: 700, color: '#C77B5E', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 12px' }}>
                 Preparar a mitad de semana
               </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 18 }}>
-                {itemsMitad.map((it) => (
-                  <BatchItem key={it.id} item={it} />
-                ))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {itemsMitad.map((it) => <BatchItem key={it.id} item={it} />)}
               </div>
-            </>
+            </div>
           )}
 
-          <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
-            Orden recomendado
-          </p>
-          <ol style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {itemsDomingo.map((it) => (
-              <li key={it.id} style={{ fontSize: 13.5 }}>
-                <strong>{it.nombre}</strong>
-                {it.metodo_preparacion && <span style={{ color: 'var(--ink-soft)' }}> — {it.metodo_preparacion}</span>}
-              </li>
-            ))}
-          </ol>
+          <div className="card">
+            <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 12px' }}>
+              Orden recomendado
+            </p>
+            <ol style={{ margin: 0, paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {itemsBatchDay.map((it) => (
+                <li key={it.id} style={{ fontSize: 14, lineHeight: 1.4 }}>
+                  <strong>{it.nombre}</strong>
+                  {it.cantidad_preparar && <span style={{ color: 'var(--ink-soft)' }}> — {it.cantidad_preparar} {it.unidad}</span>}
+                  {it.metodo_preparacion && <p style={{ margin: '2px 0 0', fontSize: 13, color: 'var(--ink-soft)' }}>{it.metodo_preparacion}</p>}
+                </li>
+              ))}
+            </ol>
+          </div>
         </>
       )}
     </div>
@@ -1143,26 +1251,24 @@ function BatchSection({ semanaInicioStr, diaBatch }) {
 function BatchItem({ item }) {
   const [abierto, setAbierto] = useState(false)
   return (
-    <div style={{ borderBottom: '1px solid var(--line)', paddingBottom: 10 }}>
+    <div style={{ borderBottom: '1px solid var(--line)', paddingBottom: 10, lastChild: { borderBottom: 'none' } }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div style={{ flex: 1 }}>
-          <span style={{ fontSize: 14, fontWeight: 600 }}>{item.nombre}</span>
-          {item.cantidad_preparar && (
-            <span style={{ fontSize: 13, color: 'var(--ink-soft)', marginLeft: 6 }}>
-              {item.cantidad_preparar} {item.unidad}
-            </span>
-          )}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>{item.nombre}</span>
+            {item.cantidad_preparar && (
+              <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>{item.cantidad_preparar} {item.unidad}</span>
+            )}
+          </div>
           <div style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 3 }}>
-            {CAT_BATCH_LABEL[item.categoria]}
+            {CAT_BATCH_LABEL[item.categoria] || item.categoria}
             {item.duracion_nevera_dias && <span> · {item.duracion_nevera_dias}d nevera</span>}
             {item.congelable && <span> · ❄️ congelable</span>}
           </div>
         </div>
         {(item.recetas_asociadas?.length > 0 || item.observaciones) && (
-          <button
-            onClick={() => setAbierto((v) => !v)}
-            style={{ background: 'none', border: 'none', color: 'var(--sage-deep)', fontSize: 12.5, padding: '0 0 0 8px', flexShrink: 0 }}
-          >
+          <button onClick={() => setAbierto((v) => !v)}
+            style={{ background: 'none', border: 'none', color: 'var(--sage-deep)', fontSize: 12.5, padding: '0 0 0 8px', flexShrink: 0 }}>
             {abierto ? 'Menos ▲' : 'Más ▼'}
           </button>
         )}
@@ -1184,253 +1290,6 @@ function BatchItem({ item }) {
   )
 }
 
-const CATEGORIAS = [
-  { id: 'todas', label: 'Todas' },
-  { id: 'desayuno', label: 'Desayunos' },
-  { id: 'comida', label: 'Comidas' },
-  { id: 'cena', label: 'Cenas' },
-  { id: 'merienda', label: 'Meriendas' },
-  { id: 'cocina de siempre', label: 'Clásicas' },
-  { id: 'recetas base', label: 'Bases' },
-]
-
-const GRUPO_LABEL = {
-  proteina: '🥩 Proteína', hidrato: '🌾 Hidratos', verdura: '🥦 Verdura',
-  fruta: '🍎 Fruta', lacteo: '🥛 Lácteo', grasa: '🫒 Grasa',
-  salsa: '🥄 Salsa', condimento: '🧂 Condimento', otro: '📦 Otro',
-}
-
-function FichaReceta({ receta, onCerrar }) {
-  const macros = receta
-  const ingredientesPorGrupo = (receta.ingredientes || []).reduce((acc, ing) => {
-    const g = ing.grupo || 'otro'
-    if (!acc[g]) acc[g] = []
-    acc[g].push(ing)
-    return acc
-  }, {})
-
-  return (
-    <div style={{ position: 'fixed', inset: 0, background: 'var(--cream)', zIndex: 100, overflowY: 'auto', maxWidth: 480, margin: '0 auto' }}>
-      <div style={{ padding: '20px 20px 100px' }}>
-        <button onClick={onCerrar} style={{ background: 'none', border: 'none', color: 'var(--sage-deep)', fontSize: 14, fontWeight: 600, padding: 0, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}>
-          ← Volver
-        </button>
-
-        <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--sage-deep)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 6px' }}>
-          {receta.categoria}{receta.subcategoria ? ` · ${receta.subcategoria}` : ''}
-        </p>
-        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, margin: '0 0 8px', lineHeight: 1.2 }}>{receta.nombre}</h2>
-        <p style={{ color: 'var(--ink-soft)', fontSize: 14, margin: '0 0 20px' }}>{receta.descripcion}</p>
-
-        {/* Chips de info rápida */}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
-          {receta.tiempo_minutos && <span style={chipEstilo}>{receta.tiempo_minutos} min</span>}
-          {receta.dificultad && <span style={chipEstilo}>{receta.dificultad}</span>}
-          {receta.taper && <span style={{ ...chipEstilo, background: 'rgba(143,168,137,0.15)', color: 'var(--sage-deep)' }}>📦 Táper</span>}
-          {receta.batch_ingredientes && <span style={{ ...chipEstilo, background: 'rgba(143,168,137,0.15)', color: 'var(--sage-deep)' }}>♻️ Batch</span>}
-        </div>
-
-        {/* Macros */}
-        {receta.calorias && (
-          <div className="card" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4, textAlign: 'center', padding: 14, marginBottom: 14 }}>
-            {[
-              { label: 'kcal', val: receta.calorias },
-              { label: 'prot', val: receta.proteina ? `${receta.proteina}g` : '—' },
-              { label: 'carb', val: receta.hidratos ? `${receta.hidratos}g` : '—' },
-              { label: 'gras', val: receta.grasas ? `${receta.grasas}g` : '—' },
-              { label: 'fibra', val: receta.fibra ? `${receta.fibra}g` : '—' },
-            ].map(({ label, val }) => (
-              <div key={label}>
-                <div style={{ fontSize: 15, fontWeight: 700 }}>{val}</div>
-                <div style={{ fontSize: 11, color: 'var(--ink-soft)', marginTop: 2 }}>{label}</div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Ingredientes */}
-        <div className="card" style={{ marginBottom: 14 }}>
-          <strong>Ingredientes</strong>
-          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {Object.entries(ingredientesPorGrupo).map(([grupo, ings]) => (
-              <div key={grupo}>
-                <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 6px' }}>
-                  {GRUPO_LABEL[grupo] || grupo}
-                </p>
-                {ings.map((ing, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, paddingBottom: 4 }}>
-                    <span>{ing.nombre}</span>
-                    <span style={{ color: 'var(--ink-soft)' }}>{ing.cantidad} {ing.unidad}</span>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Elaboración */}
-        {(receta.elaboracion || []).length > 0 && (
-          <div className="card" style={{ marginBottom: 14 }}>
-            <strong>Elaboración</strong>
-            <ol style={{ margin: '12px 0 0', paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {receta.elaboracion.map((paso, i) => (
-                <li key={i} style={{ fontSize: 14, lineHeight: 1.5, color: 'var(--ink)' }}>{paso}</li>
-              ))}
-            </ol>
-          </div>
-        )}
-
-        {/* Conservación */}
-        {(receta.conservacion || receta.congelacion) && (
-          <div className="card" style={{ marginBottom: 14 }}>
-            <strong>Conservación</strong>
-            {receta.conservacion && <p style={{ fontSize: 14, color: 'var(--ink-soft)', margin: '8px 0 0' }}>🧊 Nevera: {receta.conservacion}</p>}
-            {receta.congelacion && <p style={{ fontSize: 14, color: 'var(--ink-soft)', margin: '6px 0 0' }}>❄️ Congelador: {receta.congelacion}</p>}
-          </div>
-        )}
-
-        {/* Consejos */}
-        {(receta.consejos || []).length > 0 && (
-          <div className="card" style={{ marginBottom: 14 }}>
-            <strong>Consejos</strong>
-            <ul style={{ margin: '10px 0 0', paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {receta.consejos.map((c, i) => <li key={i} style={{ fontSize: 14 }}>{c}</li>)}
-            </ul>
-          </div>
-        )}
-
-        {/* Variantes */}
-        {(receta.variantes || []).length > 0 && (
-          <div className="card">
-            <strong>Variantes</strong>
-            <ul style={{ margin: '10px 0 0', paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {receta.variantes.map((v, i) => <li key={i} style={{ fontSize: 14 }}>{v}</li>)}
-            </ul>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-const chipEstilo = {
-  fontSize: 12, fontWeight: 500, padding: '4px 10px',
-  borderRadius: 999, border: '1px solid var(--line)', background: 'white',
-  color: 'var(--ink-soft)',
-}
-
-function ScreenRecetario() {
-  const [recetas, setRecetas] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [catActiva, setCatActiva] = useState('todas')
-  const [busqueda, setBusqueda] = useState('')
-  const [fichaAbierta, setFichaAbierta] = useState(null)
-
-  useEffect(() => {
-    async function cargar() {
-      setLoading(true)
-      const { data } = await supabase.from('nutrilab_recetas').select('*').eq('en_biblioteca', true).order('categoria').order('nombre')
-      setRecetas(data || [])
-      setLoading(false)
-    }
-    cargar()
-  }, [])
-
-  const filtradas = recetas.filter((r) => {
-    const matchCat = catActiva === 'todas' || r.categoria === catActiva
-    const matchBusq = !busqueda || r.nombre.toLowerCase().includes(busqueda.toLowerCase())
-    return matchCat && matchBusq
-  })
-
-  if (fichaAbierta) {
-    return <FichaReceta receta={fichaAbierta} onCerrar={() => setFichaAbierta(null)} />
-  }
-
-  return (
-    <>
-      <div className="app-header">
-        <p className="eyebrow">Tu biblioteca</p>
-        <h1>Recetario</h1>
-      </div>
-      <div className="app-content">
-
-        {/* Buscador */}
-        <input
-          type="text"
-          placeholder="Buscar receta…"
-          value={busqueda}
-          onChange={(e) => setBusqueda(e.target.value)}
-          style={{
-            width: '100%', border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)',
-            padding: '10px 14px', fontSize: 14, fontFamily: 'inherit',
-            background: 'white', marginBottom: 12,
-          }}
-        />
-
-        {/* Filtros de categoría */}
-        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, marginBottom: 16 }}>
-          {CATEGORIAS.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setCatActiva(c.id)}
-              style={{
-                flexShrink: 0, border: catActiva === c.id ? '1.5px solid var(--sage-deep)' : '1px solid var(--line)',
-                background: catActiva === c.id ? 'var(--sage-deep)' : 'white',
-                color: catActiva === c.id ? 'white' : 'var(--ink)',
-                borderRadius: 999, padding: '7px 14px', fontSize: 13, fontWeight: 500,
-              }}
-            >
-              {c.label}
-            </button>
-          ))}
-        </div>
-
-        {loading ? (
-          <div className="empty-state"><p>Cargando…</p></div>
-        ) : filtradas.length === 0 ? (
-          <div className="empty-state">
-            <span className="icon">🔍</span>
-            <p>No hay recetas que coincidan con tu búsqueda.</p>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {filtradas.map((r) => (
-              <button
-                key={r.id}
-                onClick={() => setFichaAbierta(r)}
-                style={{
-                  textAlign: 'left', background: 'white', border: '1px solid var(--line)',
-                  borderRadius: 'var(--radius-lg)', padding: '16px 18px', width: '100%',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
-                  <div style={{ flex: 1 }}>
-                    <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--sage-deep)', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '0 0 4px' }}>
-                      {r.subcategoria || r.categoria}
-                    </p>
-                    <p style={{ fontSize: 15, fontWeight: 600, margin: '0 0 6px', fontFamily: 'var(--font-display)', lineHeight: 1.3 }}>{r.nombre}</p>
-                    <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: 0, lineHeight: 1.4 }}>{r.descripcion}</p>
-                  </div>
-                  {r.calorias && (
-                    <div style={{ flexShrink: 0, textAlign: 'right' }}>
-                      <div style={{ fontSize: 16, fontWeight: 700 }}>{r.calorias}</div>
-                      <div style={{ fontSize: 11, color: 'var(--ink-soft)' }}>kcal</div>
-                    </div>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
-                  {r.tiempo_minutos && <span style={chipEstilo}>{r.tiempo_minutos} min</span>}
-                  {r.taper && <span style={{ ...chipEstilo, color: 'var(--sage-deep)' }}>📦 Táper</span>}
-                  {r.batch_ingredientes && <span style={{ ...chipEstilo, color: 'var(--sage-deep)' }}>♻️ Batch</span>}
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </>
-  )
-}
 
 function ScreenBatch() {
   const lunes = lunesDeEstaSemana()
