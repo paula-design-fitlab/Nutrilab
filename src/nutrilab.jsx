@@ -1292,6 +1292,86 @@ function BatchItem({ item }) {
 }
 
 
+function ScreenRecetario() {
+  const [recetas, setRecetas] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [catActiva, setCatActiva] = useState('todas')
+  const [busqueda, setBusqueda] = useState('')
+  const [fichaAbierta, setFichaAbierta] = useState(null)
+
+  useEffect(() => {
+    async function cargar() {
+      setLoading(true)
+      const { data } = await supabase.from('nutrilab_recetas').select('*').eq('en_biblioteca', true).order('categoria').order('nombre')
+      setRecetas(data || [])
+      setLoading(false)
+    }
+    cargar()
+  }, [])
+
+  const filtradas = recetas.filter((r) => {
+    const matchCat = catActiva === 'todas' || r.categoria === catActiva
+    const matchBusq = !busqueda || r.nombre.toLowerCase().includes(busqueda.toLowerCase())
+    return matchCat && matchBusq
+  })
+
+  if (fichaAbierta) {
+    return <FichaReceta receta={fichaAbierta} onCerrar={() => setFichaAbierta(null)} />
+  }
+
+  return (
+    <>
+      <div className="app-header">
+        <p className="eyebrow">Tu biblioteca</p>
+        <h1>Recetario</h1>
+      </div>
+      <div className="app-content">
+        <input type="text" placeholder="Buscar receta…" value={busqueda} onChange={(e) => setBusqueda(e.target.value)}
+          style={{ width: '100%', border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', fontSize: 14, fontFamily: 'inherit', background: 'white', marginBottom: 12 }} />
+        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, marginBottom: 16 }}>
+          {CATEGORIAS.map((c) => (
+            <button key={c.id} onClick={() => setCatActiva(c.id)} style={{
+              flexShrink: 0, border: catActiva === c.id ? '1.5px solid var(--sage-deep)' : '1px solid var(--line)',
+              background: catActiva === c.id ? 'var(--sage-deep)' : 'white',
+              color: catActiva === c.id ? 'white' : 'var(--ink)',
+              borderRadius: 999, padding: '7px 14px', fontSize: 13, fontWeight: 500,
+            }}>{c.label}</button>
+          ))}
+        </div>
+        {loading ? <div className="empty-state"><p>Cargando…</p></div>
+          : filtradas.length === 0 ? <div className="empty-state"><span className="icon">🔍</span><p>No hay recetas que coincidan.</p></div>
+          : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {filtradas.map((r) => (
+                <button key={r.id} onClick={() => setFichaAbierta(r)}
+                  style={{ textAlign: 'left', background: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg)', padding: '16px 18px', width: '100%' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--sage-deep)', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '0 0 4px' }}>{r.subcategoria || r.categoria}</p>
+                      <p style={{ fontSize: 15, fontWeight: 600, margin: '0 0 6px', fontFamily: 'var(--font-display)', lineHeight: 1.3 }}>{r.nombre}</p>
+                      <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: 0, lineHeight: 1.4 }}>{r.descripcion}</p>
+                    </div>
+                    {r.calorias && (
+                      <div style={{ flexShrink: 0, textAlign: 'right' }}>
+                        <div style={{ fontSize: 16, fontWeight: 700 }}>{r.calorias}</div>
+                        <div style={{ fontSize: 11, color: 'var(--ink-soft)' }}>kcal</div>
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+                    {r.tiempo_minutos && <span style={chipEstilo}>{r.tiempo_minutos} min</span>}
+                    {r.taper && <span style={{ ...chipEstilo, color: 'var(--sage-deep)' }}>📦 Táper</span>}
+                    {r.batch_ingredientes && <span style={{ ...chipEstilo, color: 'var(--sage-deep)' }}>♻️ Batch</span>}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+      </div>
+    </>
+  )
+}
+
 function ScreenBatch() {
   const lunes = lunesDeEstaSemana()
   const semanaInicioStr = formatoFecha(lunes)
