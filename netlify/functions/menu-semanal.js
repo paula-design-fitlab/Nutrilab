@@ -1,4 +1,4 @@
-// netlify/functions/batch-plan.js
+// netlify/functions/menu-semanal.js
 const https = require('https')
 
 exports.handler = async (event) => {
@@ -13,51 +13,49 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: JSON.stringify({ error: 'JSON inválido', detail: e.message }) }
   }
 
-  const { recetas_semana, dia_batch } = payload
+  const { dias, recetas } = payload
+
+  if (!dias || dias.length === 0) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'No hay días con horario asignado' }) }
+  }
 
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return { statusCode: 500, body: JSON.stringify({ error: 'Falta ANTHROPIC_API_KEY en variables de entorno de Netlify' }) }
   }
 
-  const prompt = `Eres el asistente de nutrición de NutriLab. Genera el plan de Batch Ingredientes para esta semana.
+  const prompt = `Eres el planificador de menús de NutriLab. Genera un menú semanal equilibrado.
 
-Menú semanal:
-${JSON.stringify(recetas_semana, null, 2)}
+Días y comidas a planificar:
+${JSON.stringify(dias, null, 2)}
 
-Día elegido para cocinar: ${dia_batch || 'domingo'}
+Recetario disponible:
+${JSON.stringify(recetas, null, 2)}
 
 Responde SOLO con JSON válido, sin texto ni bloques markdown:
 
 {
-  "notas": "Breve descripción del plan",
-  "items": [
+  "notas": "Breve descripción del menú",
+  "menu": [
     {
-      "nombre": "Pollo cocinado",
-      "categoria": "proteina",
-      "cantidad_preparar": 500,
-      "unidad": "g",
-      "recetas_asociadas": ["receta 1", "receta 2"],
-      "duracion_nevera_dias": 3,
-      "congelable": true,
-      "metodo_preparacion": "Cómo prepararlo en 1 frase",
-      "orden_preparacion": 1,
-      "momento": "domingo",
-      "observaciones": null
+      "fecha": "2026-06-29",
+      "tipo_comida": "comida",
+      "receta_id": 5,
+      "nombre": "Nombre de la receta"
     }
   ]
 }
 
 Reglas:
-- Solo ingredientes que aparecen en el menú y tienen sentido preparar con antelación.
-- Calcula cantidades reales según las recetas.
-- Ordena por tiempo de cocción (más largo primero).
-- momento "mitad_semana" solo si dura menos de 4 días en nevera.
-- Máximo 8 items, máximo 2 horas de preparación total.`
+- Asigna exactamente una receta por cada combinación fecha+tipo_comida de "dias".
+- Usa solo recetas cuya categoria coincida: desayuno→desayuno, comida→comida o cocina de siempre, merienda→merienda, cena→cena.
+- No repitas la misma receta más de 2 veces.
+- Equilibra calorías entre días.
+- Varía las proteínas (no pollo todos los días).`
 
   const body = JSON.stringify({
     model: 'claude-haiku-4-5-20251001',
-    max_tokens: 2000,
+    max_tokens: 3000,
     messages: [{ role: 'user', content: prompt }],
   })
 
@@ -93,7 +91,7 @@ Reglas:
               body: JSON.stringify(resultado),
             })
           } catch (e) {
-            resolve({ statusCode: 500, body: JSON.stringify({ error: 'Error parseando respuesta', detail: e.message }) })
+            resolve({ statusCode: 500, body: JSON.stringify({ error: 'Error parseando respuesta', detail: e.message, raw: data.slice(0, 200) }) })
           }
         })
       }
