@@ -518,6 +518,14 @@ function ScreenMenu() {
           {guardando ? 'Guardando…' : guardado ? 'Guardado ✓' : 'Guardar cambios'}
         </button>
 
+        <MenuSemanalGrid
+          fechasSemana={fechasSemana}
+          diasHorario={diasHorario}
+          horarios={horarios}
+          semanaInicioStr={semanaInicioStr}
+          hoyStr={hoyStr}
+        />
+
         <BatchSection semanaInicioStr={semanaInicioStr} diaBatch={diaBatchLocal} />
 
       </div>
@@ -525,7 +533,296 @@ function ScreenMenu() {
   )
 }
 
-const CAT_BATCH_LABEL = { proteina: '🥩 Proteína', hidrato: '🌾 Hidratos', verdura: '🥦 Verdura', salsa_base: '🥄 Salsas y bases' }
+// ─── Menú semanal: grid de planificación ──────────────────────────────────────
+
+const CAT_POR_TIPO = {
+  desayuno: ['desayuno'],
+  comida: ['comida', 'cocina de siempre'],
+  merienda: ['merienda'],
+  cena: ['cena'],
+}
+
+function MenuSemanalGrid({ fechasSemana, diasHorario, horarios, semanaInicioStr, hoyStr }) {
+  const [menu, setMenu] = useState({}) // "fecha_tipo" -> { receta_id, nombre, estado }
+  const [loading, setLoading] = useState(true)
+  const [generando, setGenerando] = useState(false)
+  const [picker, setPicker] = useState(null) // { fecha, tipo_comida }
+  const [error, setError] = useState(null)
+
+  function keyMenu(fecha, tipo) { return `${fecha}_${tipo}` }
+
+  async function cargarMenu() {
+    setLoading(true)
+    const { data } = await supabase
+      .from('nutrilab_menu_semanal')
+      .select('*, receta:nutrilab_recetas(id, nombre, calorias)')
+      .in('fecha', fechasSemana)
+    const map = {}
+    ;(data || []).forEach((row) => {
+      map[keyMenu(row.fecha, row.tipo_comida)] = {
+        id: row.id,
+        receta_id: row.receta_id,
+        nombre: row.receta?.nombre || row.nombre_libre || '',
+        calorias: row.receta?.calorias || null,
+        estado: row.estado,
+      }
+    })
+    setMenu(map)
+    setLoading(false)
+  }
+
+  useEffect(() => { cargarMenu() }, [semanaInicioStr])
+
+  function horarioDel(fecha) {
+    const hId = diasHorario[fecha]
+    return horarios.find((h) => h.id === hId) || null
+  }
+
+  async function generarMenuIA() {
+    setGenerando(true)
+    setError(null)
+
+    // Construir estructura de días con sus tipos de comida
+    const dias = fechasSemana
+      .map((fecha) => {
+        const h = horarioDel(fecha)
+        if (!h) return null
+        return { fecha, tipo_comida: h.comidas_incluidas || [] }
+      })
+      .filter(Boolean)
+
+    if (dias.length === 0) {
+      setError('Asigna un horario a los días antes de generar el menú.')
+      setGenerando(false)
+      return
+    }
+
+    // Cargar recetas disponibles (solo campos necesarios)
+    const { data: recetas } = await supabase
+      .from('nutrilab_recetas')
+      .select('id, nombre, categoria, subcategoria, calorias, proteina, hidratos, grasas, etiquetas, taper, batch_ingredientes')
+      .eq('en_biblioteca', true)
+
+    try {
+      const res = await fetch('/.netlify/functions/menu-semanal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dias, recetas }),
+      })
+      if (!res.ok) throw new Error('Error en función serverless')
+      const resultado = await res.json()
+
+      // Borrar menú existente de la semana y guardar el nuevo
+      await supabase.from('nutrilab_menu_semanal').delete().in('fecha', fechasSemana)
+
+      const filas = (resultado.menu || []).map((item, i) => ({
+        id: Date.now() + i,
+        fecha: item.fecha,
+        tipo_comida: item.tipo_comida,
+        receta_id: item.receta_id,
+        estado: 'pendiente',
+      }))
+      if (filas.length > 0) await supabase.from('nutrilab_menu_semanal').insert(filas)
+
+      await cargarMenu()
+    } catch {
+      setError('No se pudo generar el menú. Inténtalo de nuevo.')
+    }
+    setGenerando(false)
+  }
+
+  async function asignarReceta(fecha, tipo_comida, receta) {
+    const key = keyMenu(fecha, tipo_comida)
+    const existing = menu[key]
+    if (existing) {
+      await supabase.from('nutrilab_menu_semanal').delete().eq('id', existing.id)
+    }
+    await supabase.from('nutrilab_menu_semanal').insert({
+      id: Date.now(),
+      fecha,
+      tipo_comida,
+      receta_id: receta.id,
+      estado: 'pendiente',
+    })
+    await cargarMenu()
+    setPicker(null)
+  }
+
+  async function quitarReceta(fecha, tipo_comida) {
+    const key = keyMenu(fecha, tipo_comida)
+    const existing = menu[key]
+    if (existing) {
+      await supabase.from('nutrilab_menu_semanal').delete().eq('id', existing.id)
+      await cargarMenu()
+    }
+  }
+
+  if (picker) {
+    return (
+      <RecetaPicker
+        tipo={picker.tipo_comida}
+        onSeleccionar={(r) => asignarReceta(picker.fecha, picker.tipo_comida, r)}
+        onCerrar={() => setPicker(null)}
+      />
+    )
+  }
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <strong style={{ fontSize: 15 }}>Planificación</strong>
+        <button
+          onClick={generarMenuIA}
+          disabled={generando}
+          style={{
+            background: 'var(--sage-deep)', color: 'white', border: 'none',
+            borderRadius: 'var(--radius-sm)', padding: '8px 14px', fontSize: 13, fontWeight: 600,
+          }}
+        >
+          {generando ? 'Generando…' : '✨ Generar menú'}
+        </button>
+      </div>
+
+      {error && <p style={{ color: '#C77B5E', fontSize: 13, marginBottom: 10 }}>{error}</p>}
+
+      {loading ? (
+        <p style={{ color: 'var(--ink-soft)', fontSize: 14 }}>Cargando…</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {fechasSemana.map((fecha, i) => {
+            const h = horarioDel(fecha)
+            const esHoy = fecha === hoyStr
+            if (!h) return (
+              <div key={fecha} style={{ opacity: 0.4, fontSize: 13, color: 'var(--ink-soft)', paddingLeft: 4 }}>
+                {DIAS_SEMANA_LABEL[DIAS_SEMANA[i]]} {numeroDia(fecha)} — sin horario
+              </div>
+            )
+            return (
+              <div key={fecha} className="card" style={{ padding: '14px 16px' }}>
+                <p style={{
+                  fontSize: 13, fontWeight: 700, margin: '0 0 10px',
+                  color: esHoy ? 'var(--sage-deep)' : 'var(--ink)',
+                }}>
+                  {DIAS_SEMANA_LABEL[DIAS_SEMANA[i]]} {numeroDia(fecha)}
+                  {esHoy && <span style={{ fontSize: 11, fontWeight: 500, marginLeft: 6, color: 'var(--sage-deep)' }}>· hoy</span>}
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {(h.comidas_incluidas || []).map((tipo) => {
+                    const slot = menu[keyMenu(fecha, tipo)]
+                    return (
+                      <div key={tipo} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--sage-deep)', textTransform: 'uppercase', width: 62, flexShrink: 0, letterSpacing: '0.03em' }}>
+                          {TIPO_COMIDA_LABEL[tipo]}
+                        </span>
+                        {slot ? (
+                          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(143,168,137,0.08)', borderRadius: 'var(--radius-sm)', padding: '7px 10px' }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <span style={{ fontSize: 13, fontWeight: 500, display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{slot.nombre}</span>
+                              {slot.calorias && <span style={{ fontSize: 11, color: 'var(--ink-soft)' }}>{slot.calorias} kcal</span>}
+                            </div>
+                            <div style={{ display: 'flex', gap: 4, flexShrink: 0, marginLeft: 6 }}>
+                              <button onClick={() => setPicker({ fecha, tipo_comida: tipo })} style={{ background: 'none', border: 'none', color: 'var(--sage-deep)', fontSize: 12, padding: '2px 4px' }}>Cambiar</button>
+                              <button onClick={() => quitarReceta(fecha, tipo)} style={{ background: 'none', border: 'none', color: '#C77B5E', fontSize: 12, padding: '2px 4px' }}>✕</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setPicker({ fecha, tipo_comida: tipo })}
+                            style={{ flex: 1, background: 'none', border: '1px dashed var(--line)', borderRadius: 'var(--radius-sm)', padding: '7px 10px', color: 'var(--ink-soft)', fontSize: 13, textAlign: 'left' }}
+                          >
+                            + Añadir
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RecetaPicker({ tipo, onSeleccionar, onCerrar }) {
+  const [recetas, setRecetas] = useState([])
+  const [busqueda, setBusqueda] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function cargar() {
+      const cats = CAT_POR_TIPO[tipo] || [tipo]
+      const { data } = await supabase
+        .from('nutrilab_recetas')
+        .select('id, nombre, categoria, subcategoria, calorias, proteina, tiempo_minutos, taper')
+        .in('categoria', cats)
+        .eq('en_biblioteca', true)
+        .order('nombre')
+      setRecetas(data || [])
+      setLoading(false)
+    }
+    cargar()
+  }, [tipo])
+
+  const filtradas = recetas.filter((r) =>
+    !busqueda || r.nombre.toLowerCase().includes(busqueda.toLowerCase())
+  )
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'var(--cream)', zIndex: 200, overflowY: 'auto', maxWidth: 480, margin: '0 auto' }}>
+      <div style={{ padding: '20px 20px 100px' }}>
+        <button onClick={onCerrar} style={{ background: 'none', border: 'none', color: 'var(--sage-deep)', fontSize: 14, fontWeight: 600, padding: 0, marginBottom: 16 }}>
+          ← Volver
+        </button>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 16px' }}>
+          Elegir {TIPO_COMIDA_LABEL[tipo]?.toLowerCase()}
+        </h2>
+        <input
+          autoFocus
+          type="text"
+          placeholder="Buscar…"
+          value={busqueda}
+          onChange={(e) => setBusqueda(e.target.value)}
+          style={{ width: '100%', border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', fontSize: 14, fontFamily: 'inherit', marginBottom: 14 }}
+        />
+        {loading ? (
+          <p style={{ color: 'var(--ink-soft)' }}>Cargando…</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {filtradas.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => onSeleccionar(r)}
+                style={{ textAlign: 'left', background: 'white', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg)', padding: '14px 16px', width: '100%' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ fontSize: 11, color: 'var(--sage-deep)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', margin: '0 0 3px' }}>{r.subcategoria || r.categoria}</p>
+                    <p style={{ fontSize: 14, fontWeight: 600, margin: 0, fontFamily: 'var(--font-display)' }}>{r.nombre}</p>
+                  </div>
+                  {r.calorias && (
+                    <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: 10 }}>
+                      <div style={{ fontSize: 15, fontWeight: 700 }}>{r.calorias}</div>
+                      <div style={{ fontSize: 11, color: 'var(--ink-soft)' }}>kcal</div>
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                  {r.tiempo_minutos && <span style={chipEstilo}>{r.tiempo_minutos} min</span>}
+                  {r.taper && <span style={{ ...chipEstilo, color: 'var(--sage-deep)' }}>📦 Táper</span>}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+
 const CAT_BATCH_ORDER = { proteina: 0, hidrato: 1, verdura: 2, salsa_base: 3 }
 
 function BatchSection({ semanaInicioStr, diaBatch }) {
