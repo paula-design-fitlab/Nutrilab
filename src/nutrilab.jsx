@@ -518,13 +518,235 @@ function ScreenMenu() {
           {guardando ? 'Guardando…' : guardado ? 'Guardado ✓' : 'Guardar cambios'}
         </button>
 
-        <div className="empty-state">
-          <span className="icon">📅</span>
-          <p>La planificación de comidas por receta llegará en cuanto tengas tu recetario listo.</p>
-        </div>
+        <BatchSection semanaInicioStr={semanaInicioStr} diaBatch={diaBatchLocal} />
 
       </div>
     </>
+  )
+}
+
+const CAT_BATCH_LABEL = { proteina: '🥩 Proteína', hidrato: '🌾 Hidratos', verdura: '🥦 Verdura', salsa_base: '🥄 Salsas y bases' }
+const CAT_BATCH_ORDER = { proteina: 0, hidrato: 1, verdura: 2, salsa_base: 3 }
+
+function BatchSection({ semanaInicioStr, diaBatch }) {
+  const [plan, setPlan] = useState(null)
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [generando, setGenerando] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    async function cargar() {
+      setLoading(true)
+      const { data: p } = await supabase.from('nutrilab_batch_plan').select('*').eq('semana_inicio', semanaInicioStr).maybeSingle()
+      if (p) {
+        setPlan(p)
+        const { data: it } = await supabase.from('nutrilab_batch_items').select('*').eq('plan_id', p.id).order('orden_preparacion')
+        setItems(it || [])
+      }
+      setLoading(false)
+    }
+    cargar()
+  }, [semanaInicioStr])
+
+  async function generarPlan() {
+    setGenerando(true)
+    setError(null)
+
+    // 1. Obtener recetas del menú de esta semana
+    const fechaFin = (() => {
+      const d = new Date(semanaInicioStr + 'T00:00:00')
+      d.setDate(d.getDate() + 6)
+      return formatoFecha(d)
+    })()
+
+    const { data: menuItems } = await supabase
+      .from('nutrilab_menu_semanal')
+      .select('tipo_comida, receta:nutrilab_recetas(nombre, ingredientes, batch_ingredientes, categoria)')
+      .gte('fecha', semanaInicioStr)
+      .lte('fecha', fechaFin)
+
+    const recetasSemana = (menuItems || [])
+      .filter((m) => m.receta)
+      .map((m) => ({
+        tipo_comida: m.tipo_comida,
+        nombre: m.receta.nombre,
+        ingredientes: m.receta.ingredientes,
+        batch_ingredientes: m.receta.batch_ingredientes,
+      }))
+
+    if (recetasSemana.length === 0) {
+      setError('No hay recetas planificadas esta semana. Planifica tu menú primero.')
+      setGenerando(false)
+      return
+    }
+
+    try {
+      const res = await fetch('/.netlify/functions/batch-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recetas_semana: recetasSemana, dia_batch: diaBatch || 'domingo' }),
+      })
+
+      if (!res.ok) throw new Error('Error en la función serverless')
+      const planData = await res.json()
+
+      // 2. Guardar plan en Supabase
+      const planId = Date.now()
+      if (plan) {
+        await supabase.from('nutrilab_batch_items').delete().eq('plan_id', plan.id)
+        await supabase.from('nutrilab_batch_plan').delete().eq('id', plan.id)
+      }
+      await supabase.from('nutrilab_batch_plan').insert({
+        id: planId,
+        semana_inicio: semanaInicioStr,
+        dia_preparacion: diaBatch || 'domingo',
+        notas: planData.notas || '',
+      })
+
+      const itemsInsert = (planData.items || []).map((it, i) => ({
+        id: planId + i + 1,
+        plan_id: planId,
+        nombre: it.nombre,
+        categoria: it.categoria,
+        cantidad_preparar: it.cantidad_preparar,
+        unidad: it.unidad,
+        recetas_asociadas: it.recetas_asociadas || [],
+        duracion_nevera_dias: it.duracion_nevera_dias,
+        congelable: it.congelable || false,
+        metodo_preparacion: it.metodo_preparacion,
+        orden_preparacion: it.orden_preparacion || i + 1,
+        momento: it.momento || 'domingo',
+        observaciones: it.observaciones || null,
+      }))
+
+      await supabase.from('nutrilab_batch_items').insert(itemsInsert)
+
+      setPlan({ id: planId, notas: planData.notas })
+      setItems(itemsInsert)
+    } catch (err) {
+      setError('No se pudo generar el plan. Inténtalo de nuevo.')
+    }
+    setGenerando(false)
+  }
+
+  const itemsDomingo = items.filter((i) => i.momento === 'domingo').sort((a, b) => a.orden_preparacion - b.orden_preparacion)
+  const itemsMitad = items.filter((i) => i.momento === 'mitad_semana')
+
+  return (
+    <div className="card" style={{ marginTop: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: plan ? 12 : 0 }}>
+        <strong>Batch Ingredientes</strong>
+        <button
+          onClick={generarPlan}
+          disabled={generando}
+          style={{
+            background: 'var(--sage-deep)', color: 'white', border: 'none',
+            borderRadius: 'var(--radius-sm)', padding: '7px 14px', fontSize: 13, fontWeight: 600,
+          }}
+        >
+          {generando ? 'Generando…' : plan ? '↺ Regenerar' : '✨ Generar plan'}
+        </button>
+      </div>
+
+      {error && <p style={{ color: '#C77B5E', fontSize: 13, marginTop: 10 }}>{error}</p>}
+
+      {loading && <p style={{ color: 'var(--ink-soft)', fontSize: 14, marginTop: 10 }}>Cargando…</p>}
+
+      {!loading && !plan && !error && (
+        <p style={{ color: 'var(--ink-soft)', fontSize: 14, marginTop: 10, lineHeight: 1.5 }}>
+          Genera tu plan de batch ingredientes una vez hayas planificado el menú de la semana.
+        </p>
+      )}
+
+      {plan && items.length > 0 && (
+        <>
+          {plan.notas && <p style={{ color: 'var(--ink-soft)', fontSize: 13, fontStyle: 'italic', marginBottom: 16 }}>{plan.notas}</p>}
+
+          {itemsDomingo.length > 0 && (
+            <>
+              <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--sage-deep)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+                Preparar el {diaBatch || 'domingo'}
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 18 }}>
+                {itemsDomingo.map((it) => (
+                  <BatchItem key={it.id} item={it} />
+                ))}
+              </div>
+            </>
+          )}
+
+          {itemsMitad.length > 0 && (
+            <>
+              <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--peach)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+                Preparar a mitad de semana
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 18 }}>
+                {itemsMitad.map((it) => (
+                  <BatchItem key={it.id} item={it} />
+                ))}
+              </div>
+            </>
+          )}
+
+          <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+            Orden recomendado
+          </p>
+          <ol style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {itemsDomingo.map((it) => (
+              <li key={it.id} style={{ fontSize: 13.5 }}>
+                <strong>{it.nombre}</strong>
+                {it.metodo_preparacion && <span style={{ color: 'var(--ink-soft)' }}> — {it.metodo_preparacion}</span>}
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+    </div>
+  )
+}
+
+function BatchItem({ item }) {
+  const [abierto, setAbierto] = useState(false)
+  return (
+    <div style={{ borderBottom: '1px solid var(--line)', paddingBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>{item.nombre}</span>
+          {item.cantidad_preparar && (
+            <span style={{ fontSize: 13, color: 'var(--ink-soft)', marginLeft: 6 }}>
+              {item.cantidad_preparar} {item.unidad}
+            </span>
+          )}
+          <div style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 3 }}>
+            {CAT_BATCH_LABEL[item.categoria]}
+            {item.duracion_nevera_dias && <span> · {item.duracion_nevera_dias}d nevera</span>}
+            {item.congelable && <span> · ❄️ congelable</span>}
+          </div>
+        </div>
+        {(item.recetas_asociadas?.length > 0 || item.observaciones) && (
+          <button
+            onClick={() => setAbierto((v) => !v)}
+            style={{ background: 'none', border: 'none', color: 'var(--sage-deep)', fontSize: 12.5, padding: '0 0 0 8px', flexShrink: 0 }}
+          >
+            {abierto ? 'Menos ▲' : 'Más ▼'}
+          </button>
+        )}
+      </div>
+      {abierto && (
+        <div style={{ marginTop: 8, paddingLeft: 4 }}>
+          {item.recetas_asociadas?.length > 0 && (
+            <div style={{ marginBottom: 6 }}>
+              <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--ink-soft)', margin: '0 0 4px' }}>Se usará en:</p>
+              <ul style={{ margin: 0, paddingLeft: 14 }}>
+                {item.recetas_asociadas.map((r, i) => <li key={i} style={{ fontSize: 13 }}>{r}</li>)}
+              </ul>
+            </div>
+          )}
+          {item.observaciones && <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: 0, fontStyle: 'italic' }}>{item.observaciones}</p>}
+        </div>
+      )}
+    </div>
   )
 }
 
