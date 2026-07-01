@@ -4,9 +4,10 @@ import { supabase, sb } from './supabaseClient'
 const TABS = [
   { id: 'hoy', label: 'Hoy', icon: '🌿' },
   { id: 'menu', label: 'Menú', icon: '📅' },
+  { id: 'batch', label: 'Batch', icon: '♻️' },
   { id: 'recetario', label: 'Recetario', icon: '📖' },
   { id: 'compra', label: 'Compra', icon: '🛒' },
-  { id: 'seguimiento', label: 'Seguimiento', icon: '🌙' },
+  { id: 'seguimiento', label: 'Seguimiento', icon: '⚖️' },
 ]
 
 const ESTADOS = ['pendiente', 'realizada', 'omitida']
@@ -525,8 +526,6 @@ function ScreenMenu() {
           semanaInicioStr={semanaInicioStr}
           hoyStr={hoyStr}
         />
-
-        <BatchSection semanaInicioStr={semanaInicioStr} diaBatch={diaBatchLocal} />
 
       </div>
     </>
@@ -1433,6 +1432,48 @@ function ScreenRecetario() {
   )
 }
 
+function ScreenBatch() {
+  const lunes = lunesDeEstaSemana()
+  const semanaInicioStr = formatoFecha(lunes)
+
+  const [semanaConfig, setSemanaConfig] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function cargar() {
+      const { data } = await supabase
+        .from('nutrilab_semana_config')
+        .select('*')
+        .eq('semana_inicio', semanaInicioStr)
+        .maybeSingle()
+      setSemanaConfig(data || null)
+      setLoading(false)
+    }
+    cargar()
+  }, [semanaInicioStr])
+
+  return (
+    <>
+      <div className="app-header">
+        <p className="eyebrow">{mesLabel(semanaInicioStr)}</p>
+        <h1>Batch cooking</h1>
+        {!loading && semanaConfig?.dia_batch_cooking && (
+          <p style={{ color: 'var(--ink-soft)', fontSize: 14, marginTop: 4 }}>
+            Día elegido: <strong>{DIAS_SEMANA_LABEL[semanaConfig.dia_batch_cooking]}</strong>
+          </p>
+        )}
+      </div>
+      <div className="app-content">
+        {loading ? (
+          <div className="empty-state"><p>Cargando…</p></div>
+        ) : (
+          <BatchSection semanaInicioStr={semanaInicioStr} diaBatch={semanaConfig?.dia_batch_cooking || 'domingo'} />
+        )}
+      </div>
+    </>
+  )
+}
+
 function ScreenCompra() {
   return (
     <>
@@ -1609,6 +1650,7 @@ function ScreenSeguimiento() {
 const SCREENS = {
   hoy: ScreenHoy,
   menu: ScreenMenu,
+  batch: ScreenBatch,
   recetario: ScreenRecetario,
   compra: ScreenCompra,
   seguimiento: ScreenSeguimiento,
