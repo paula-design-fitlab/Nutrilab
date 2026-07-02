@@ -7,53 +7,55 @@ exports.handler = async (event) => {
   try { payload = JSON.parse(event.body) }
   catch (e) { return { statusCode: 400, body: JSON.stringify({ error: 'JSON inválido' }) } }
 
-  const { dias, recetas, preferencias, contextoIA } = payload
+  const { dias, recetas, preferencias } = payload
   if (!dias || dias.length === 0) return { statusCode: 400, body: JSON.stringify({ error: 'No hay días con horario asignado' }) }
 
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return { statusCode: 500, body: JSON.stringify({ error: 'Falta ANTHROPIC_API_KEY en Netlify' }) }
 
+  const { tiempo = 'algo', diasGym = [], diasEspeciales = {}, sinBatch = false, contexto = '' } = preferencias || {}
+
   const tiempoDesc = {
-    mucho: 'tiene mucho tiempo para cocinar, puede usar recetas elaboradas',
-    algo: 'tiene algo de tiempo, prioriza recetas sencillas',
-    poco: 'va justa de tiempo, usa recetas muy rápidas y táper',
-    minimo: 'solo quiere cocinar un día, prioriza batch cooking y táper al máximo',
-  }[preferencias?.tiempo || 'algo']
+    mucho: 'Tiene mucho tiempo para cocinar esta semana. Puede incluir recetas más elaboradas.',
+    algo: 'Tiene algo de tiempo. Prioriza recetas sencillas y equilibradas.',
+    poco: 'Va justa de tiempo. Usa solo recetas rápidas (menos de 20 minutos) y con táper.',
+    minimo: 'Solo puede cocinar un día. Maximiza recetas con táper y batch ingredientes.',
+  }[tiempo]
 
-  const diasGym = preferencias?.diasGym || []
-  const diasEspeciales = preferencias?.diasEspeciales || {}
+  const prompt = `Eres el planificador de menús de NutriLab. Genera un menú semanal para Paula.
 
-  const prompt = `Eres el planificador de menús de NutriLab. Genera un menú semanal equilibrado para Paula.
+═══════════════════════════════
+CONTEXTO DE LA SEMANA (LEE ESTO PRIMERO Y RESPÉTALO AL PIE DE LA LETRA):
+${contexto ? `"${contexto}"` : 'No hay contexto adicional esta semana.'}
+═══════════════════════════════
 
-${contextoIA ? `CONTEXTO DE LA SEMANA (muy importante, ten esto muy en cuenta):\n"${contextoIA}"\n` : ''}
-La usuaria ${tiempoDesc}.
-${diasGym.length > 0 ? `Días de gimnasio (necesita más proteína): ${diasGym.join(', ')}` : ''}
-${Object.keys(diasEspeciales).length > 0 ? `Días especiales (no planificar esa comida o ser muy ligero): ${JSON.stringify(diasEspeciales)}` : ''}
+RESTRICCIONES ADICIONALES:
+- ${tiempoDesc}
+${sinBatch ? '- IMPORTANTE: Esta semana NO puede hacer Batch Ingredientes. Elige solo recetas que no dependan de ingredientes preparados con antelación.' : '- Puede aprovechar Batch Ingredientes.'}
+${diasGym.length > 0 ? `- Días de gimnasio (necesita más proteína estos días): ${diasGym.join(', ')}` : ''}
+${Object.keys(diasEspeciales).length > 0 ? `- Días especiales (pon receta muy ligera o rápida): ${Object.keys(diasEspeciales).join(', ')}` : ''}
 
-Días y comidas a planificar:
+DÍAS Y COMIDAS A PLANIFICAR:
 ${JSON.stringify(dias, null, 2)}
 
-Recetario disponible:
+RECETARIO DISPONIBLE:
 ${JSON.stringify(recetas, null, 2)}
 
 Responde SOLO con JSON válido, sin texto ni bloques markdown:
 {
-  "notas": "Breve descripción del menú teniendo en cuenta el contexto",
+  "notas": "Breve resumen del menú teniendo en cuenta el contexto de la semana",
   "menu": [
     { "fecha": "2026-06-29", "tipo_comida": "comida", "receta_id": 5, "nombre": "Nombre receta" }
   ]
 }
 
-Reglas:
-- Asigna exactamente una receta por cada combinación fecha+tipo_comida de "dias".
-- categoria coincide: desayuno→desayuno, comida→comida o cocina de siempre, merienda→merienda, cena→cena.
-- No repitas la misma receta más de 2 veces en la semana.
-- Equilibra calorías entre días (no más de 400 kcal de diferencia).
-- En días de gimnasio prioriza proteína alta.
-- Si hay días especiales, pon la receta más ligera o rápida ese día.
-- Si va justa de tiempo, prioriza taper:true y tiempo_minutos bajo.
-- Varía proteínas: no más de 2 días seguidos con la misma proteína principal.
-- Si el contexto menciona restricciones, fechas concretas o preferencias, tenlas muy en cuenta.`
+REGLAS:
+1. Asigna exactamente una receta por cada combinación fecha+tipo_comida de "dias".
+2. Coincidencia de categoría: desayuno→desayuno, comida→comida o cocina de siempre, merienda→merienda, cena→cena.
+3. No repitas la misma receta más de 2 veces en la semana.
+4. Equilibra calorías entre días (no más de 400 kcal de diferencia).
+5. Varía proteínas: no más de 2 días seguidos con la misma proteína principal.
+6. Si el contexto menciona restricciones o preferencias concretas, son OBLIGATORIAS, no opcionales.`
 
   const body = JSON.stringify({
     model: 'claude-haiku-4-5-20251001',
@@ -64,7 +66,10 @@ Reglas:
   return new Promise((resolve) => {
     const req = https.request({
       hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Length': Buffer.byteLength(body) },
+      headers: {
+        'Content-Type': 'application/json', 'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01', 'Content-Length': Buffer.byteLength(body),
+      },
     }, (res) => {
       let data = ''
       res.on('data', (chunk) => { data += chunk })
