@@ -1542,20 +1542,332 @@ function ScreenBatch() {
   )
 }
 
+const GRUPO_COMPRA_LABEL = {
+  proteina: '🥩 Carnes y proteínas',
+  hidrato: '🌾 Hidratos',
+  verdura: '🥦 Verduras y hortalizas',
+  fruta: '🍎 Frutas',
+  lacteo: '🥛 Lácteos',
+  grasa: '🫒 Aceites y grasas',
+  salsa: '🥫 Salsas y conservas',
+  condimento: '🧂 Condimentos',
+  otro: '📦 Otros',
+}
+const GRUPO_COMPRA_ORDEN = ['proteina','hidrato','verdura','fruta','lacteo','grasa','salsa','condimento','otro']
+
 function ScreenCompra() {
+  const [lista, setLista] = useState([])
+  const [despensa, setDespensa] = useState([]) // nombres en minúsculas
+  const [loading, setLoading] = useState(true)
+  const [generando, setGenerando] = useState(false)
+  const [error, setError] = useState(null)
+  const [mostrarComprados, setMostrarComprados] = useState(false)
+
+  const lunes = lunesDeEstaSemana()
+  const semanaInicioStr = formatoFecha(lunes)
+  const fechasSemana = DIAS_SEMANA.map((_, i) => {
+    const d = new Date(lunes); d.setDate(lunes.getDate() + i); return formatoFecha(d)
+  })
+
+  async function cargarTodo() {
+    setLoading(true)
+    const [{ data: items }, { data: desp }] = await Promise.all([
+      supabase.from('nutrilab_lista_compra').select('*').eq('semana_inicio', semanaInicioStr).order('grupo').order('nombre'),
+      supabase.from('nutrilab_despensa').select('nombre'),
+    ])
+    setLista(items || [])
+    setDespensa((desp || []).map(d => d.nombre.toLowerCase()))
+    setLoading(false)
+  }
+
+  useEffect(() => { cargarTodo() }, [semanaInicioStr])
+
+  async function generarLista() {
+    setGenerando(true)
+    setError(null)
+
+    const { data: menuItems } = await supabase
+      .from('nutrilab_menu_semanal')
+      .select('receta:nutrilab_recetas(nombre, ingredientes)')
+      .in('fecha', fechasSemana)
+
+    const recetasConIngredientes = (menuItems || []).filter(m => m.receta?.ingredientes?.length > 0)
+
+    if (recetasConIngredientes.length === 0) {
+      setError('No hay recetas guardadas en el menú esta semana. Genera y guarda tu menú primero.')
+      setGenerando(false)
+      return
+    }
+
+    // Agrupar ingredientes: clave = nombre normalizado + unidad
+    const mapa = {}
+    recetasConIngredientes.forEach(({ receta }) => {
+      ;(receta.ingredientes || []).forEach(ing => {
+        const clave = `${ing.nombre?.toLowerCase().trim()}_${ing.unidad || ''}`
+        if (!mapa[clave]) {
+          mapa[clave] = {
+            nombre: ing.nombre,
+            cantidad: typeof ing.cantidad === 'number' ? ing.cantidad : null,
+            unidad: ing.unidad || '',
+            grupo: ing.grupo || 'otro',
+            recetas: [receta.nombre],
+          }
+        } else {
+          if (typeof ing.cantidad === 'number' && mapa[clave].cantidad !== null) {
+            mapa[clave].cantidad += ing.cantidad
+          }
+          if (!mapa[clave].recetas.includes(receta.nombre)) {
+            mapa[clave].recetas.push(receta.nombre)
+          }
+        }
+      })
+    })
+
+    // Determinar estado inicial: tengo_en_casa si está en despensa
+    const desp = despensa
+    const nuevosItems = Object.values(mapa).map((ing, i) => ({
+      id: Date.now() + i,
+      semana_inicio: semanaInicioStr,
+      nombre: ing.nombre,
+      cantidad: ing.cantidad,
+      unidad: ing.unidad,
+      grupo: ing.grupo,
+      recetas_origen: ing.recetas,
+      estado: desp.includes(ing.nombre?.toLowerCase().trim()) ? 'tengo_en_casa' : 'pendiente',
+    }))
+
+    // Borrar lista anterior de esta semana e insertar nueva
+    await supabase.from('nutrilab_lista_compra').delete().eq('semana_inicio', semanaInicioStr)
+    if (nuevosItems.length > 0) {
+      await supabase.from('nutrilab_lista_compra').insert(nuevosItems)
+    }
+
+    await cargarTodo()
+    setGenerando(false)
+  }
+
+  async function cambiarEstado(item, nuevoEstado) {
+    await supabase.from('nutrilab_lista_compra').update({ estado: nuevoEstado }).eq('id', item.id)
+    setLista(prev => prev.map(i => i.id === item.id ? { ...i, estado: nuevoEstado } : i))
+  }
+
+  async function toggleDespensa(item) {
+    const nombre = item.nombre.toLowerCase().trim()
+    const esDespensa = despensa.includes(nombre)
+    if (esDespensa) {
+      await supabase.from('nutrilab_despensa').delete().eq('nombre', nombre)
+      setDespensa(prev => prev.filter(d => d !== nombre))
+    } else {
+      await supabase.from('nutrilab_despensa').insert({ id: Date.now(), nombre })
+      setDespensa(prev => [...prev, nombre])
+      // Marcar como tengo_en_casa también en la lista actual
+      await cambiarEstado(item, 'tengo_en_casa')
+    }
+  }
+
+  const pendientes = lista.filter(i => i.estado === 'pendiente')
+  const tengoEnCasa = lista.filter(i => i.estado === 'tengo_en_casa')
+  const comprados = lista.filter(i => i.estado === 'comprado')
+
+  const pendientesPorGrupo = GRUPO_COMPRA_ORDEN.reduce((acc, g) => {
+    const items = pendientes.filter(i => i.grupo === g)
+    if (items.length > 0) acc[g] = items
+    return acc
+  }, {})
+
+  const totalPendientes = pendientes.length
+  const totalComprados = comprados.length
+  const total = lista.filter(i => i.estado !== 'tengo_en_casa').length
+
+  if (loading) {
+    return (
+      <>
+        <div className="app-header">
+          <p className="eyebrow">Esta semana</p>
+          <h1>Lista de la compra</h1>
+        </div>
+        <div className="app-content"><div className="empty-state"><p>Cargando…</p></div></div>
+      </>
+    )
+  }
+
   return (
     <>
       <div className="app-header">
-        <p className="eyebrow">Generada automáticamente</p>
+        <p className="eyebrow">Esta semana</p>
         <h1>Lista de la compra</h1>
       </div>
       <div className="app-content">
-        <div className="empty-state">
-          <span className="icon">🛒</span>
-          <p>En cuanto planifiques tu menú semanal, la lista de la compra se generará sola, agrupando todos los ingredientes.</p>
+
+        {/* Botón generar + progreso */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <div>
+            {total > 0 && (
+              <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>
+                <strong style={{ color: 'var(--sage-deep)' }}>{totalComprados}</strong> de {total} comprados
+              </p>
+            )}
+          </div>
+          <button onClick={generarLista} disabled={generando} style={{
+            background: 'var(--sage-deep)', color: 'white', border: 'none',
+            borderRadius: 'var(--radius-sm)', padding: '8px 16px', fontSize: 13, fontWeight: 600,
+          }}>
+            {generando ? 'Generando…' : lista.length > 0 ? '↺ Regenerar' : '✨ Generar lista'}
+          </button>
         </div>
+
+        {error && <p style={{ color: '#C77B5E', fontSize: 13, marginBottom: 12 }}>{error}</p>}
+
+        {lista.length === 0 && !error && (
+          <div className="empty-state">
+            <span className="icon">🛒</span>
+            <p>Genera la lista una vez tengas el menú de la semana guardado.</p>
+          </div>
+        )}
+
+        {/* Barra de progreso */}
+        {total > 0 && (
+          <div style={{ background: 'var(--line)', borderRadius: 999, height: 6, marginBottom: 20, overflow: 'hidden' }}>
+            <div style={{ background: 'var(--sage-deep)', height: '100%', width: `${(totalComprados / total) * 100}%`, transition: 'width 0.3s ease' }} />
+          </div>
+        )}
+
+        {/* Items pendientes por grupo */}
+        {Object.entries(pendientesPorGrupo).map(([grupo, items]) => (
+          <div key={grupo} style={{ marginBottom: 18 }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 8px' }}>
+              {GRUPO_COMPRA_LABEL[grupo] || grupo}
+            </p>
+            <div className="card" style={{ padding: '4px 0' }}>
+              {items.map((item, idx) => (
+                <ItemCompra
+                  key={item.id}
+                  item={item}
+                  esDespensa={despensa.includes(item.nombre?.toLowerCase().trim())}
+                  onComprar={() => cambiarEstado(item, 'comprado')}
+                  onDespensa={() => toggleDespensa(item)}
+                  separador={idx < items.length - 1}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+
+        {/* Ya lo tengo en casa */}
+        {tengoEnCasa.length > 0 && (
+          <div style={{ marginBottom: 18 }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 8px' }}>
+              🏠 Ya lo tengo en casa
+            </p>
+            <div className="card" style={{ padding: '4px 0' }}>
+              {tengoEnCasa.map((item, idx) => (
+                <ItemCompra
+                  key={item.id}
+                  item={item}
+                  esDespensa={despensa.includes(item.nombre?.toLowerCase().trim())}
+                  atenuado
+                  onDeshacer={() => cambiarEstado(item, 'pendiente')}
+                  onDespensa={() => toggleDespensa(item)}
+                  separador={idx < tengoEnCasa.length - 1}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Comprados */}
+        {comprados.length > 0 && (
+          <div style={{ marginBottom: 18 }}>
+            <button
+              onClick={() => setMostrarComprados(v => !v)}
+              style={{ background: 'none', border: 'none', fontSize: 11, fontWeight: 700, color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '0 0 8px', cursor: 'pointer' }}
+            >
+              ✓ Comprados ({comprados.length}) {mostrarComprados ? '▲' : '▼'}
+            </button>
+            {mostrarComprados && (
+              <div className="card" style={{ padding: '4px 0' }}>
+                {comprados.map((item, idx) => (
+                  <ItemCompra
+                    key={item.id}
+                    item={item}
+                    esDespensa={despensa.includes(item.nombre?.toLowerCase().trim())}
+                    atenuado
+                    comprado
+                    onDeshacer={() => cambiarEstado(item, 'pendiente')}
+                    onDespensa={() => toggleDespensa(item)}
+                    separador={idx < comprados.length - 1}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </>
+  )
+}
+
+function ItemCompra({ item, esDespensa, atenuado, comprado, onComprar, onDeshacer, onDespensa, separador }) {
+  const [detalle, setDetalle] = useState(false)
+
+  return (
+    <div style={{ borderBottom: separador ? '1px solid var(--line)' : 'none', padding: '10px 16px', opacity: atenuado ? 0.55 : 1 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        {/* Checkbox */}
+        <button
+          onClick={comprado || atenuado ? onDeshacer : onComprar}
+          style={{
+            width: 22, height: 22, borderRadius: 6, flexShrink: 0,
+            border: comprado ? 'none' : '1.5px solid var(--line)',
+            background: comprado ? 'var(--sage-deep)' : 'white',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer',
+          }}
+        >
+          {comprado && <span style={{ color: 'white', fontSize: 13, lineHeight: 1 }}>✓</span>}
+        </button>
+
+        {/* Nombre + cantidad */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <span style={{
+            fontSize: 14, fontWeight: 500,
+            textDecoration: comprado ? 'line-through' : 'none',
+            color: comprado ? 'var(--ink-soft)' : 'var(--ink)',
+          }}>
+            {item.nombre}
+          </span>
+          {(item.cantidad || item.unidad) && (
+            <span style={{ fontSize: 13, color: 'var(--ink-soft)', marginLeft: 6 }}>
+              {item.cantidad ? `${Number.isInteger(item.cantidad) ? item.cantidad : item.cantidad.toFixed(0)}` : ''} {item.unidad}
+            </span>
+          )}
+          {esDespensa && <span style={{ fontSize: 10, color: 'var(--sage-deep)', marginLeft: 6, fontWeight: 600 }}>DESPENSA</span>}
+        </div>
+
+        {/* Acciones */}
+        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+          {(item.recetas_origen?.length > 0) && (
+            <button onClick={() => setDetalle(v => !v)}
+              style={{ background: 'none', border: 'none', fontSize: 12, color: 'var(--ink-soft)', padding: '2px 4px' }}>
+              {detalle ? '▲' : '▼'}
+            </button>
+          )}
+          <button
+            onClick={onDespensa}
+            title={esDespensa ? 'Quitar de despensa' : 'Añadir a despensa'}
+            style={{ background: 'none', border: 'none', fontSize: 14, padding: '2px 4px', opacity: esDespensa ? 1 : 0.4 }}
+          >
+            🏠
+          </button>
+        </div>
+      </div>
+
+      {detalle && item.recetas_origen?.length > 0 && (
+        <p style={{ fontSize: 12, color: 'var(--ink-soft)', margin: '6px 0 0 34px', fontStyle: 'italic' }}>
+          {item.recetas_origen.join(', ')}
+        </p>
+      )}
+    </div>
   )
 }
 
