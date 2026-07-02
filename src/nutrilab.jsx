@@ -351,7 +351,6 @@ function ScreenMenu() {
   const [loading, setLoading] = useState(true)
   const [guardando, setGuardando] = useState(false)
   const [guardado, setGuardado] = useState(false)
-  const [contextoIA, setContextoIA] = useState('')
 
   const lunes = lunesDeEstaSemana()
   const fechasSemana = DIAS_SEMANA.map((_, i) => {
@@ -520,15 +519,12 @@ function ScreenMenu() {
           {guardando ? 'Guardando…' : guardado ? 'Guardado ✓' : 'Guardar cambios'}
         </button>
 
-        <ContextoSemana onContextoChange={(ctx) => setContextoIA(ctx)} />
-
         <MenuSemanalGrid
           fechasSemana={fechasSemana}
           diasHorario={diasHorario}
           horarios={horarios}
           semanaInicioStr={semanaInicioStr}
           hoyStr={hoyStr}
-          contextoIA={contextoIA}
         />
 
       </div>
@@ -537,71 +533,6 @@ function ScreenMenu() {
 }
 
 // ─── Contexto IA de la semana ─────────────────────────────────────────────────
-
-function ContextoSemana({ onContextoChange }) {
-  const [texto, setTexto] = useState('')
-  const [abierto, setAbierto] = useState(false)
-
-  function guardar() {
-    onContextoChange(texto)
-    setAbierto(false)
-  }
-
-  return (
-    <div className="card" style={{ marginBottom: 14 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <strong style={{ fontSize: 14 }}>💬 Cuéntame tu semana</strong>
-          {texto && !abierto && (
-            <p style={{ fontSize: 12, color: 'var(--sage-deep)', margin: '2px 0 0', fontStyle: 'italic' }}>
-              Contexto guardado ✓
-            </p>
-          )}
-        </div>
-        <button
-          onClick={() => setAbierto((v) => !v)}
-          style={{ background: 'none', border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)', padding: '6px 12px', fontSize: 13, color: 'var(--ink-soft)' }}
-        >
-          {abierto ? 'Cerrar' : texto ? 'Editar' : 'Abrir'}
-        </button>
-      </div>
-
-      {abierto && (
-        <div style={{ marginTop: 14 }}>
-          <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '0 0 10px', lineHeight: 1.5 }}>
-            Explícame cómo va a ser tu semana. La IA lo tendrá en cuenta al generar el menú.
-          </p>
-          <p style={{ fontSize: 12, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
-            Por ejemplo: "Esta semana voy muy justa de tiempo, entreno lunes y jueves, el miércoles como fuera con compañeras de trabajo y el viernes probablemente no tenga ganas de cocinar."
-          </p>
-          <textarea
-            autoFocus
-            value={texto}
-            onChange={(e) => setTexto(e.target.value)}
-            placeholder="Cuéntame lo que necesitas…"
-            style={{
-              width: '100%', border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)',
-              padding: '10px 12px', fontSize: 14, fontFamily: 'inherit',
-              minHeight: 100, resize: 'vertical', lineHeight: 1.5,
-            }}
-          />
-          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <button onClick={guardar}
-              style={{ flex: 1, background: 'var(--sage-deep)', color: 'white', border: 'none', borderRadius: 'var(--radius-sm)', padding: '10px', fontWeight: 600, fontSize: 14 }}>
-              Guardar contexto
-            </button>
-            {texto && (
-              <button onClick={() => { setTexto(''); onContextoChange('') }}
-                style={{ background: 'none', border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', fontSize: 13, color: '#C77B5E' }}>
-                Borrar
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
 
 // ─── Menú semanal: grid de planificación ──────────────────────────────────────
 
@@ -623,6 +554,8 @@ function ModalPreguntas({ fechasSemana, onConfirmar, onCancelar }) {
   const [tiempo, setTiempo] = useState('algo')
   const [diasGym, setDiasGym] = useState([])
   const [diasEspeciales, setDiasEspeciales] = useState({})
+  const [sinBatch, setSinBatch] = useState(false)
+  const [contexto, setContexto] = useState('')
 
   function toggleGym(fecha) {
     setDiasGym((prev) => prev.includes(fecha) ? prev.filter((f) => f !== fecha) : [...prev, fecha])
@@ -631,17 +564,35 @@ function ModalPreguntas({ fechasSemana, onConfirmar, onCancelar }) {
     setDiasEspeciales((prev) => {
       const next = { ...prev }
       if (next[fecha]) delete next[fecha]
-      else next[fecha] = 'comida fuera'
+      else next[fecha] = 'día especial'
       return next
     })
   }
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 300, display: 'flex', alignItems: 'flex-end', maxWidth: 480, margin: '0 auto' }}>
-      <div style={{ background: 'var(--cream)', borderRadius: '20px 20px 0 0', padding: '24px 20px 40px', width: '100%', maxHeight: '85vh', overflowY: 'auto' }}>
-        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 20px' }}>Antes de generar…</h2>
+      <div style={{ background: 'var(--cream)', borderRadius: '20px 20px 0 0', padding: '24px 20px 40px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 6px' }}>Cuéntame tu semana</h2>
+        <p style={{ color: 'var(--ink-soft)', fontSize: 14, margin: '0 0 24px' }}>La IA usará esto para elegir las recetas más adecuadas.</p>
 
-        <strong style={{ fontSize: 13 }}>¿Cuánto tiempo tienes esta semana?</strong>
+        {/* Texto libre — primero y más prominente */}
+        <strong style={{ fontSize: 13 }}>¿Cómo tienes la semana?</strong>
+        <p style={{ color: 'var(--ink-soft)', fontSize: 12.5, margin: '4px 0 8px' }}>
+          Cuéntame lo que necesites. Por ejemplo: "Esta semana trabajo mucho, el miércoles como fuera, el viernes no quiero cocinar nada."
+        </p>
+        <textarea
+          value={contexto}
+          onChange={(e) => setContexto(e.target.value)}
+          placeholder="Escribe aquí…"
+          style={{
+            width: '100%', border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)',
+            padding: '10px 12px', fontSize: 14, fontFamily: 'inherit',
+            minHeight: 90, resize: 'none', lineHeight: 1.5, marginBottom: 20,
+          }}
+        />
+
+        {/* Tiempo disponible */}
+        <strong style={{ fontSize: 13 }}>¿Cuánto tiempo tienes para cocinar?</strong>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '10px 0 20px' }}>
           {TIEMPO_OPCIONES.map((op) => (
             <button key={op.id} onClick={() => setTiempo(op.id)} style={{
@@ -653,6 +604,23 @@ function ModalPreguntas({ fechasSemana, onConfirmar, onCancelar }) {
           ))}
         </div>
 
+        {/* Batch */}
+        <button
+          onClick={() => setSinBatch((v) => !v)}
+          style={{
+            width: '100%', textAlign: 'left', marginBottom: 20,
+            border: sinBatch ? '1.5px solid #C77B5E' : '1px solid var(--line)',
+            background: sinBatch ? 'rgba(199,123,94,0.08)' : 'white',
+            borderRadius: 'var(--radius-sm)', padding: '12px 14px', fontSize: 14,
+            color: sinBatch ? '#C77B5E' : 'var(--ink)', fontWeight: sinBatch ? 600 : 400,
+            display: 'flex', alignItems: 'center', gap: 10,
+          }}
+        >
+          <span style={{ fontSize: 18 }}>{sinBatch ? '✗' : '○'}</span>
+          Esta semana no puedo hacer Batch Ingredientes
+        </button>
+
+        {/* Días de gimnasio */}
         <strong style={{ fontSize: 13 }}>¿Qué días entrenas?</strong>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: '10px 0 20px' }}>
           {fechasSemana.map((fecha, i) => (
@@ -665,9 +633,10 @@ function ModalPreguntas({ fechasSemana, onConfirmar, onCancelar }) {
           ))}
         </div>
 
+        {/* Días especiales */}
         <strong style={{ fontSize: 13 }}>¿Hay algún día especial?</strong>
-        <p style={{ color: 'var(--ink-soft)', fontSize: 12.5, margin: '4px 0 10px' }}>Comida fuera, cena fuera, no quiero cocinar…</p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 24 }}>
+        <p style={{ color: 'var(--ink-soft)', fontSize: 12.5, margin: '4px 0 10px' }}>Comida fuera, cena fuera, cumpleaños, no quiero cocinar…</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 28 }}>
           {fechasSemana.map((fecha, i) => (
             <button key={fecha} onClick={() => toggleEspecial(fecha)} style={{
               border: diasEspeciales[fecha] ? '1.5px solid var(--peach)' : '1px solid var(--line)',
@@ -678,7 +647,7 @@ function ModalPreguntas({ fechasSemana, onConfirmar, onCancelar }) {
         </div>
 
         <div style={{ display: 'flex', gap: 10 }}>
-          <button onClick={() => onConfirmar({ tiempo, diasGym, diasEspeciales })}
+          <button onClick={() => onConfirmar({ tiempo, diasGym, diasEspeciales, sinBatch, contexto })}
             style={{ flex: 1, background: 'var(--sage-deep)', color: 'white', border: 'none', borderRadius: 'var(--radius-sm)', padding: '13px', fontWeight: 700, fontSize: 15 }}>
             ✨ Generar menú
           </button>
@@ -778,7 +747,7 @@ function MenuSemanalGrid({ fechasSemana, diasHorario, horarios, semanaInicioStr,
       const res = await fetch('/.netlify/functions/menu-semanal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dias, recetas, preferencias, contextoIA }),
+        body: JSON.stringify({ dias, recetas, preferencias }),
       })
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}))
